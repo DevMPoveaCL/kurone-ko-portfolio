@@ -1,12 +1,15 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, type KeyboardEvent, type RefObject } from "react";
 import { ExternalLink } from "./ExternalNavigation";
 import { useBugCesantePlayer } from "./BugCesantePlayer";
 import { withPublicPath } from "@/shared/routing/public-path";
 const YODA_PROFILE_WIDTH = 1004;
 const YODA_PROFILE_HEIGHT = 951;
+export const PROFESSIONAL_VOID_IMAGE = {
+  DESKTOP: "/assets/projects/yoda-profile-connected-v3.webp",
+  MOBILE: "/assets/projects/yoda-profile-connected-v3-mobile.webp",
+} as const;
 
 const PROFESSIONAL_VOID_QUOTE = {
   DESKTOP: "“Mi primer trabajo como desarrollador, encontrar busco; al lado oscuro de la cesantía, caer no debo.”",
@@ -244,7 +247,10 @@ export function ProfessionalVoidState({ socialFocusRef }: ProfessionalVoidStateP
         </div>
       </div>
       <figure className="professional-void-figure" ref={figureRef}>
-        <Image alt="" aria-hidden="true" height={YODA_PROFILE_HEIGHT} priority sizes="(max-width: 48rem) min(72vw, 18rem), 44vw" src={withPublicPath("/assets/projects/yoda-profile-connected-v3.webp")} unoptimized width={YODA_PROFILE_WIDTH} />
+         <picture className="professional-void-picture">
+           <source media="(max-width: 48rem), (pointer: coarse)" sizes="min(72vw, 18rem)" srcSet={withPublicPath(PROFESSIONAL_VOID_IMAGE.MOBILE)} />
+            <img alt="" aria-hidden="true" decoding="async" height={YODA_PROFILE_HEIGHT} loading="lazy" sizes="(max-width: 48rem) min(72vw, 18rem), (pointer: coarse) min(72vw, 18rem), 44vw" src={withPublicPath(PROFESSIONAL_VOID_IMAGE.DESKTOP)} width={YODA_PROFILE_WIDTH} />
+         </picture>
         <figcaption style={{ paddingInline: 0 }}>
           <p aria-label={PROFESSIONAL_VOID_QUOTE.DESKTOP} className="professional-void-quote">
             <span aria-hidden="true" className="professional-void-quote-desktop"><span className="professional-void-quote-text">{PROFESSIONAL_VOID_QUOTE.DESKTOP}</span></span>

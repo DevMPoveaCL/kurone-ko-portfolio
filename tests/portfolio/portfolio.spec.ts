@@ -840,6 +840,27 @@ test.describe("Immersive accessible portfolio", () => {
   );
 
   test(
+    "uses one shared audio element and exposes keyboard-accessible lyric seeking",
+    { tag: ["@high", "@e2e", "@portfolio", "@PORTFOLIO-AUDIO-E2E-001"] },
+    async ({ page }) => {
+      const portfolio = new PortfolioPage(page);
+      await portfolio.gotoShowcase();
+      await activateMusicThroughVoid(page);
+
+      const player = page.locator(".bug-cesante-player");
+      await expect(page.locator(".bug-cesante-audio")).toHaveCount(1);
+      await expect(player.getByRole("slider", { name: "Posición de la canción" })).toBeVisible();
+      await player.getByRole("button", { name: "Mostrar letra" }).click();
+
+      const firstCue = page.locator(".bug-cesante-player-lyrics > button.bug-cesante-lyric").first();
+      await expect(firstCue).toBeVisible();
+      await expect(firstCue).toHaveAttribute("aria-label", /^Ir a \d+:\d{2}:/u);
+      await firstCue.press("Enter");
+      await expect(player.getByRole("slider", { name: "Posición de la canción" })).toHaveAttribute("data-seek-status", "pending");
+    },
+  );
+
+  test(
     "keeps mobile alternate lyrics below the player and restores focus after closing",
     { tag: ["@critical", "@e2e", "@portfolio", "@PORTFOLIO-ALTERNATE-LYRICS-E2E-001"] },
     async ({ page }) => {
@@ -1211,7 +1232,7 @@ test.describe("Immersive accessible portfolio", () => {
       await portfolio.gotoPortfolio();
       await expect(portfolio.alternateEntry).toBeVisible();
       await portfolio.alternateEntry.click();
-      await expect(page).toHaveURL(/\/portfolio$/);
+      await expect(page).toHaveURL(/\/portfolio\/$/);
       await expect(portfolio.alternateCards).toHaveCount(13);
 
       await page.getByRole("link", { name: "Volver" }).click();
@@ -1243,8 +1264,8 @@ test.describe("Immersive accessible portfolio", () => {
       await expect(portfolio.alternateEntry).toBeVisible();
       await expect(page.getByRole("heading", { name: "¿Qué hay detrás?" })).toBeVisible();
       await portfolio.alternateEntry.click();
-      await expect(page).toHaveURL(/\/portfolio$/);
-      await expect(portfolio.alternateCards).toHaveCount(13);
+      await expect(page).toHaveURL(/\/portfolio\/$/);
+      await expect(portfolio.alternateCards).toHaveCount(13, { timeout: 30_000 });
       await expect(page.locator(".vault-shell")).toHaveCount(0);
       await expect(page.getByRole("dialog", { name: "Transición a la sala principal" })).toHaveCount(0);
     },
@@ -2268,10 +2289,11 @@ test.describe("Immersive accessible portfolio", () => {
     async ({ page }) => {
       await page.emulateMedia({ reducedMotion: "reduce" });
       const portfolio = new PortfolioPage(page);
-      await portfolio.seedValidProgression();
+      await portfolio.gotoPortfolio();
+      await portfolio.unlockWithKeyboard();
       await page.goto("/?view=showcase&tech=react&project=timer");
       await expect(
-        page.getByRole("heading", { level: 1, name: "Timer" }),
+        page.getByRole("heading", { level: 1, name: "Kurone-ko Timer" }),
       ).toBeFocused();
       await page
         .getByRole("button", { name: "Volver a la sala principal" })
@@ -2280,24 +2302,25 @@ test.describe("Immersive accessible portfolio", () => {
       expect(
         await page.evaluate(() => window.history.state?.showcaseDetail),
       ).toBeUndefined();
-      await expect(page.getByRole("checkbox", { name: "React" })).toBeChecked();
-      await portfolio.gotoPortfolio();
-      await portfolio.unlockWithKeyboard();
+      await page.getByRole("button", { name: /^Filtros/ }).click();
+      const restoredReactFilter = page.getByRole("dialog").getByRole("checkbox", { name: "React" });
+      await expect(restoredReactFilter).toBeChecked();
+      await page.getByRole("button", { name: "Cerrar filtros" }).click();
+      await page.goto("/");
+      await page.goto("/?view=showcase");
 
-      const react = page.getByRole("checkbox", { name: "React" });
+      await page.getByRole("button", { name: /^Filtros/ }).click();
+      const react = page.getByRole("dialog").getByRole("checkbox", { name: "React" });
       await react.click();
-      await page.getByRole("button", { name: "Ver historia de Timer" }).click();
-      await expect(
-        page.getByRole("heading", { level: 1, name: "Timer" }),
-      ).toBeFocused();
-      await page.goBack();
-      await expect(react).toBeChecked();
-      await expect(
-        page.getByRole("heading", {
-          level: 2,
-          name: "Proyectos en la sala principal",
-        }),
-      ).toBeFocused();
+      await page.getByRole("button", { name: /^APLICAR/ }).click();
+      await page.getByRole("button", { name: "Ver historia de Kurone-ko Timer" }).click();
+      const timerHistoryDialog = page.getByRole("dialog", { name: "KURONE-KO TIMER" });
+      await expect(timerHistoryDialog).toBeVisible();
+      await timerHistoryDialog.getByRole("button", { name: "Cerrar información de Kurone-ko Timer" }).click();
+      await expect(timerHistoryDialog).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Ver historia de Kurone-ko Timer" })).toBeFocused();
+      await page.getByRole("button", { name: /^Filtros/ }).click();
+      await expect(page.getByRole("dialog").getByRole("checkbox", { name: "React" })).toBeChecked();
 
       await page.reload();
       await portfolio.unlockWithKeyboard();

@@ -28,17 +28,18 @@ export function AlternatePortfolioGate() {
   );
 
   useLayoutEffect(() => {
-    if (resetSessionProgressionForDocumentReload()) {
+    const storedProgression = readSessionProgression({
+      challengeIds: PROJECT_UNLOCK_CHALLENGES.map((challenge) => challenge.id),
+      sealIds: VAULT_SEALS.map((seal) => seal.id),
+    });
+
+    if (storedProgression.alternateHandoff === null && resetSessionProgressionForDocumentReload()) {
       window.history.replaceState(null, "", withPublicPath("/"));
       router.replace("/");
       return;
     }
 
-    const options = {
-      challengeIds: PROJECT_UNLOCK_CHALLENGES.map((challenge) => challenge.id),
-      sealIds: VAULT_SEALS.map((seal) => seal.id),
-    };
-    const progression = readSessionProgression(options);
+    const progression = storedProgression;
     const consumed = consumeAlternateHandoff(progression);
     let cancelled = false;
 

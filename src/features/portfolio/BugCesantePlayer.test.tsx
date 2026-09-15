@@ -6,7 +6,8 @@ import { renderToString } from "react-dom/server";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BugCesantePlayerProvider, parseWebVtt, PLAYER_PRESENTATION, PlayerMovementLegend, useBugCesantePlayer } from "./BugCesantePlayer";
+import { resetSharedAudioElementForTests } from "@/shared/media/audio-controller";
+import { BugCesantePlayerProvider, parseWebVtt, PLAYER_PRESENTATION, PlayerMovementLegend, reconcileLyricCues, useBugCesantePlayer } from "./BugCesantePlayer";
 
 const PRIMARY_PLAYER_STORAGE_KEY = "kuroneko:bug-cesante-player";
 
@@ -53,6 +54,7 @@ function stubSuccessfulPlayback() {
 
 describe("BugCesantePlayerProvider", () => {
   beforeEach(() => {
+    resetSharedAudioElementForTests();
     window.sessionStorage.clear();
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("Lyrics are not needed for this test."))));
   });
@@ -303,6 +305,57 @@ describe("BugCesantePlayerProvider", () => {
     expect(cues.at(-1)?.text).toBe("Nos vemos el lunes.");
   });
 
+  it("keeps lyric seeking pending until media confirms it and supports keyboard activation", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      text: () => Promise.resolve("WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\nPrimera línea\n"),
+    })));
+    let actualTime = 0;
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    const audio = document.querySelector<HTMLAudioElement>(".bug-cesante-audio");
+    if (audio === null) throw new Error("Expected the shared audio element.");
+    Object.defineProperties(audio, {
+      buffered: { configurable: true, value: { end: () => 360, length: 1, start: () => 0 } },
+      currentTime: { configurable: true, get: () => actualTime, set: (value: number) => { actualTime = value; } },
+      duration: { configurable: true, value: 360 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      seekable: { configurable: true, value: { end: () => 360, length: 1, start: () => 0 } },
+    });
+    fireEvent.loadedMetadata(audio);
+
+    await user.click(await screen.findByRole("button", { name: "Mostrar letra" }));
+    const cue = await screen.findByRole("button", { name: "Ir a 0:01: Primera línea" });
+    expect(cue).not.toHaveAttribute("aria-current");
+    await user.click(cue);
+
+    const range = screen.getByRole("slider", { name: "Posición de la canción" });
+    expect(range).toHaveAttribute("data-seek-status", "pending");
+    expect(screen.getByText("0:00 / 6:00", { exact: true })).toBeInTheDocument();
+
+    fireEvent.seeked(audio);
+    await waitFor(() => expect(range).toHaveAttribute("data-seek-status", "confirmed"));
+    expect(cue).toHaveAttribute("aria-current", "true");
+    expect(JSON.parse(window.sessionStorage.getItem("kuroneko:bug-cesante-player:alternate") ?? "{}")).toMatchObject({ currentTime: 1 });
+
+    cue.focus();
+    await user.keyboard(" ");
+    expect(range).toHaveAttribute("data-seek-status", "pending");
+  });
+
+  it("clips lyric cues defensively to the confirmed media duration", () => {
+    expect(reconcileLyricCues([
+      { end: 5, id: "one", start: 1, text: "one" },
+      { end: 12, id: "two", start: 10, text: "two" },
+    ], 8)).toEqual([{ end: 5, id: "one", start: 1, text: "one" }]);
+  });
+
   it("locks focus in the mobile lyrics surface and restores it after Escape", async () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({
       addEventListener: vi.fn(),
@@ -377,7 +430,7 @@ describe("BugCesantePlayerProvider", () => {
     fireEvent.keyUp(window, { code: "KeyM", key: "m" });
 
     await user.click(screen.getByRole("button", { name: "Desbloquear movimiento" }));
-    expect(screen.getByRole("complementary", { name: "Guía para mover el reproductor" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Guía para mover el reproductor" })).toBeInTheDocument());
     fireEvent.keyDown(window, { code: "KeyM", key: "m" });
     fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
     expect(player).toHaveAttribute("data-positioned", "true");

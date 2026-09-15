@@ -132,9 +132,9 @@ export function ProjectCarousel({ activeProjectId, isProjectModalOpen = false, o
         Se muestran {projects.length} proyectos. {filters} Proyecto activo: {activeProject.name}.
       </p>
       <div aria-label="Navegación de proyectos" className="project-carousel-navigation">
-        <button aria-label="Proyecto anterior" className="project-carousel-arrow" data-arrow-direction="previous" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex - 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/left.png")} width={48} /></button>
+        <button aria-label="Proyecto anterior" className="project-carousel-arrow" data-arrow-direction="previous" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex - 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/left.webp")} width={48} /></button>
         <p aria-hidden="true">{String(resolvedActiveIndex + 1).padStart(2, "0")} / {String(projects.length).padStart(2, "0")}</p>
-        <button aria-label="Proyecto siguiente" className="project-carousel-arrow" data-arrow-direction="next" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex + 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/right.png")} width={48} /></button>
+        <button aria-label="Proyecto siguiente" className="project-carousel-arrow" data-arrow-direction="next" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex + 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/right.webp")} width={48} /></button>
       </div>
       <p className="visually-hidden" id="project-carousel-gesture-hint">También puedes arrastrar horizontalmente el proyecto activo para navegar; los controles siguen disponibles.</p>
       <ol

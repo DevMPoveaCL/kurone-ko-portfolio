@@ -17,7 +17,7 @@ import {
   getCarouselFocusTarget,
   getFocusableElements,
 } from "../../shared/a11y/modal-focus";
-import { ProfessionalVoidState } from "./ProfessionalVoidState";
+import { PROFESSIONAL_VOID_IMAGE, ProfessionalVoidState } from "./ProfessionalVoidState";
 import { filterProjects, getActiveProjectId, getFilterLabel, validateFilterIds } from "./project-taxonomy";
 import { SHOWCASE_ACTION, showcaseReducer } from "./showcase-reducer";
 import { SPECIAL_FILTER_ID, type FilterId, type ProjectEntry } from "./vault-types";
@@ -163,6 +163,14 @@ export function ProjectShowcase({
     if (!isFilterDialogOpen) return;
     void prepareImageReadiness(withPublicPath(UNLOCK_SUCCESS_IMAGE_SRC));
   }, [isFilterDialogOpen]);
+
+  useEffect(() => {
+    if (!isVoidActive) return;
+    const source = window.matchMedia("(max-width: 48rem), (pointer: coarse)").matches
+      ? PROFESSIONAL_VOID_IMAGE.MOBILE
+      : PROFESSIONAL_VOID_IMAGE.DESKTOP;
+    void prepareImageReadiness(withPublicPath(source));
+  }, [isVoidActive]);
 
   useEffect(() => {
     if (!isShowcaseRevealing) return;
@@ -394,13 +402,14 @@ export function ProjectShowcase({
     dispatch({ type: SHOWCASE_ACTION.PROJECT_HOME, projectIds: filteredProjects.map((project) => project.id) });
     if (window.history.state?.showcaseDetail) window.history.back();
     else dispatch({ type: SHOWCASE_ACTION.DETAIL_CLOSED });
+    window.requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true }));
   }
 
   return (
     <div
       className="project-showcase"
       data-showcase-reveal={isShowcaseRevealing ? "entering" : "settled"}
-      inert={!isShowcaseInteractive || undefined}
+      inert={!isShowcaseInteractive && detailProject === null ? true : undefined}
       onTransitionEnd={() => setShowcaseMotion((previous) => ({ ...previous, isInteractive: true }))}
       suppressHydrationWarning
     >

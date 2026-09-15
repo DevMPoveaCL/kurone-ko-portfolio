@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { getSharedAudioElement } from "@/shared/media/audio-controller";
 import { withPublicPath } from "@/shared/routing/public-path";
 import { KEYCAP_ASSET } from "./keycap-assets";
 
@@ -38,6 +39,14 @@ const LYRICS_STATUS = {
 } as const;
 
 type LyricsStatus = (typeof LYRICS_STATUS)[keyof typeof LYRICS_STATUS];
+
+const SEEK_STATUS = {
+  CONFIRMED: "confirmed",
+  IDLE: "idle",
+  PENDING: "pending",
+} as const;
+
+type SeekStatus = (typeof SEEK_STATUS)[keyof typeof SEEK_STATUS];
 
 export interface LyricCue {
   end: number;
@@ -112,6 +121,8 @@ interface BugCesantePlayerContextValue {
   unlockPlayerMovement: () => void;
   registerSocialFocus: (element: HTMLElement | null) => void;
   seekTo: (time: number) => void;
+  seekStatus: SeekStatus;
+  pendingSeekTime: number | null;
   setLyricsExpanded: (expanded: boolean) => void;
   showPlayer: () => void;
   togglePlayback: () => void;
@@ -268,6 +279,34 @@ function formatTime(value: number) {
   return `${minutes}:${seconds}`;
 }
 
+function getBufferedEnd(audio: HTMLAudioElement) {
+  return audio.buffered.length === 0 ? 0 : audio.buffered.end(audio.buffered.length - 1);
+}
+
+function isSeekTargetAvailable(audio: HTMLAudioElement, target: number) {
+  if (!Number.isFinite(audio.duration) || audio.readyState < HTMLMediaElement.HAVE_METADATA) return false;
+
+  for (let index = 0; index < audio.buffered.length; index += 1) {
+    if (target >= audio.buffered.start(index) - 0.05 && target <= audio.buffered.end(index) + 0.05) return true;
+  }
+
+  for (let index = 0; index < audio.seekable.length; index += 1) {
+    if (target >= audio.seekable.start(index) - 0.05 && target <= audio.seekable.end(index) + 0.05) return true;
+  }
+
+  return audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA && getBufferedEnd(audio) >= audio.duration - 0.25;
+}
+
+export function reconcileLyricCues(cues: readonly LyricCue[], duration: number) {
+  if (!Number.isFinite(duration) || duration <= 0) return [...cues];
+
+  return cues.flatMap((cue) => {
+    if (cue.start >= duration) return [];
+    const end = Math.min(cue.end, duration);
+    return end > cue.start ? [{ ...cue, end }] : [];
+  });
+}
+
 function clampPosition(position: PlayerPosition, width: number, height: number): PlayerPosition {
   const maxX = Math.max(PLAYER_MARGIN, window.innerWidth - width - PLAYER_MARGIN);
   const maxY = Math.max(PLAYER_MARGIN, window.innerHeight - height - PLAYER_MARGIN);
@@ -309,6 +348,22 @@ function PlayerMovementKeycap({ className, name }: PlayerMovementKeycapProps) {
   // The keycap artwork is decorative; the adjacent offscreen sentence carries the instruction.
   // eslint-disable-next-line @next/next/no-img-element
   return <img alt="" aria-hidden="true" className={className} decoding="sync" draggable={false} height={asset.height} src={withPublicPath(asset.src)} width={asset.width} />;
+}
+
+function LyricCueButton({ active, cue, inContext, index, onSeek }: { active: boolean; cue: LyricCue; inContext: boolean; index: number; onSeek: (time: number) => void }) {
+  return (
+    <button
+      aria-current={active ? "true" : undefined}
+      aria-label={`Ir a ${formatTime(cue.start)}: ${cue.text.replace(/\n/gu, " ")}`}
+      className={active ? "bug-cesante-lyric is-active" : "bug-cesante-lyric"}
+      data-context={inContext ? "true" : "false"}
+      data-cue-index={index}
+      onClick={() => onSeek(cue.start)}
+      type="button"
+    >
+      <span className="visually-hidden">{active ? "Línea actual: " : ""}</span>{cue.text}
+    </button>
+  );
 }
 
 export function PlayerMovementLegend({ className }: PlayerMovementLegendProps) {
@@ -399,9 +454,13 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const [activeCueIndex, setActiveCueIndex] = useState(-1);
   const [position, setPosition] = useState<PlayerPosition | null>(null);
   const [movementUnlocked, setMovementUnlocked] = useState(false);
+  const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
+  const [seekStatus, setSeekStatus] = useState<SeekStatus>(SEEK_STATUS.IDLE);
   const movementUnlockedRef = useRef(movementUnlocked);
   const keyboardMovementModeRef = useRef(false);
   const keyboardMovementReturnFocusRef = useRef<HTMLElement | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const seekAttemptedTargetRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     isCoarseLayoutRef.current = isCoarseLayout;
@@ -440,6 +499,79 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     };
   }, [presentation]);
 
+  const updateTimeEvent = useEffectEvent(updateTime);
+  const persistEvent = useEffectEvent(persist);
+  const attemptPendingSeekEvent = useEffectEvent(attemptPendingSeek);
+  const confirmSeekIfSettledEvent = useEffectEvent(confirmSeekIfSettled);
+  const restoreActualMediaTimeEvent = useEffectEvent(restoreActualMediaTime);
+
+  useEffect(() => {
+    const audio = getSharedAudioElement(withPublicPath(AUDIO_SRC));
+    audioRef.current = audio;
+    const syncTime = () => {
+      attemptPendingSeekEvent();
+      if (pendingSeekRef.current !== null) return;
+      updateTimeEvent(audio.currentTime);
+    };
+    const syncDuration = () => {
+      const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      setDuration(nextDuration);
+      setLyrics((currentLyrics) => reconcileLyricCues(currentLyrics, nextDuration));
+      attemptPendingSeekEvent();
+    };
+    const syncPlayback = () => setIsPlaying(!audio.paused && !audio.ended);
+    const handlePause = () => {
+      syncPlayback();
+      persistEvent({ currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0, paused: true });
+    };
+    const handlePlay = () => {
+      syncPlayback();
+      persistEvent({ paused: false });
+    };
+    const handleEnded = () => {
+      setIsPlaying(false);
+      pendingSeekRef.current = null;
+      seekAttemptedTargetRef.current = null;
+      setPendingSeekTime(null);
+      setSeekStatus(SEEK_STATUS.IDLE);
+      updateTimeEvent(0);
+      persistEvent({ currentTime: 0, paused: true });
+    };
+    const handleError = () => {
+      setIsPlaying(false);
+      restoreActualMediaTimeEvent(audio);
+    };
+
+    audio.addEventListener("canplaythrough", attemptPendingSeekEvent);
+    audio.addEventListener("durationchange", syncDuration);
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("error", handleError);
+    audio.addEventListener("loadedmetadata", syncDuration);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("playing", syncPlayback);
+    audio.addEventListener("progress", attemptPendingSeekEvent);
+    audio.addEventListener("seeked", confirmSeekIfSettledEvent);
+    audio.addEventListener("timeupdate", syncTime);
+    syncDuration();
+    syncPlayback();
+
+    return () => {
+      audio.removeEventListener("canplaythrough", attemptPendingSeekEvent);
+      audio.removeEventListener("durationchange", syncDuration);
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("error", handleError);
+      audio.removeEventListener("loadedmetadata", syncDuration);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("playing", syncPlayback);
+      audio.removeEventListener("progress", attemptPendingSeekEvent);
+      audio.removeEventListener("seeked", confirmSeekIfSettledEvent);
+      audio.removeEventListener("timeupdate", syncTime);
+      audioRef.current = null;
+    };
+  }, [presentation]);
+
   function persist(next?: Partial<StoredPlayerState>) {
     const audio = audioRef.current;
     const nextState = {
@@ -465,16 +597,62 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     });
   }
 
-  const updateTimeEvent = useEffectEvent(updateTime);
-  const persistEvent = useEffectEvent(persist);
+  function getSafeSeekTime(nextTime: number, audio: HTMLAudioElement) {
+    return Math.min(Math.max(0, nextTime), Number.isFinite(audio.duration) ? audio.duration : Math.max(0, nextTime));
+  }
+
+  function restoreActualMediaTime(audio: HTMLAudioElement) {
+    const actualTime = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+    pendingSeekRef.current = null;
+    seekAttemptedTargetRef.current = null;
+    setPendingSeekTime(null);
+    setSeekStatus(SEEK_STATUS.IDLE);
+    updateTime(actualTime);
+    persist({ currentTime: actualTime });
+  }
+
+  function attemptPendingSeek() {
+    const audio = audioRef.current;
+    const target = pendingSeekRef.current;
+    if (audio === null || target === null || !isSeekTargetAvailable(audio, target)) return;
+    if (seekAttemptedTargetRef.current === target) return;
+
+    seekAttemptedTargetRef.current = target;
+    try {
+      audio.currentTime = target;
+    } catch {
+      restoreActualMediaTime(audio);
+    }
+  }
+
+  function confirmSeekIfSettled() {
+    const audio = audioRef.current;
+    const target = pendingSeekRef.current;
+    const actualTime = audio?.currentTime;
+    if (audio === null || target === null || typeof actualTime !== "number" || !Number.isFinite(actualTime) || Math.abs(actualTime - target) > 0.25) return;
+
+    const confirmedTime = Math.max(0, actualTime);
+    pendingSeekRef.current = null;
+    seekAttemptedTargetRef.current = null;
+    setPendingSeekTime(null);
+    setSeekStatus(SEEK_STATUS.CONFIRMED);
+    updateTime(confirmedTime);
+    persist({ currentTime: confirmedTime });
+  }
 
   function seekTo(nextTime: number) {
     const audio = audioRef.current;
     if (audio === null) return;
-    const safeTime = Math.min(Math.max(0, nextTime), Number.isFinite(audio.duration) ? audio.duration : nextTime);
-    audio.currentTime = safeTime;
-    updateTime(safeTime);
-    persist({ currentTime: safeTime });
+    const safeTime = getSafeSeekTime(nextTime, audio);
+    pendingSeekRef.current = safeTime;
+    seekAttemptedTargetRef.current = null;
+    setPendingSeekTime(safeTime);
+    setSeekStatus(SEEK_STATUS.PENDING);
+    if (audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+      audio.preload = "auto";
+      audio.load();
+    }
+    attemptPendingSeek();
   }
 
   function attemptPlay() {
@@ -642,7 +820,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
         if (cancelled) return;
         const cues = parseWebVtt(source);
         if (cues.length === 0) throw new Error("Lyrics file has no cues");
-        setLyrics(cues);
+        setLyrics(reconcileLyricCues(cues, audioRef.current?.duration ?? 0));
         setLyricsStatus(LYRICS_STATUS.READY);
       })
       .catch(() => {
@@ -659,12 +837,15 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     if (audio === null) return;
 
     const syncMetadata = () => {
-      setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-      if (restoredTimeRef.current > 0) {
+      const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      setDuration(nextDuration);
+      setLyrics((currentLyrics) => reconcileLyricCues(currentLyrics, nextDuration));
+      if (restoredTimeRef.current > 0 && audio.currentTime <= 0.05) {
         audio.currentTime = Math.min(restoredTimeRef.current, Number.isFinite(audio.duration) ? audio.duration : restoredTimeRef.current);
         updateTimeEvent(audio.currentTime);
-        restoredTimeRef.current = 0;
       }
+      restoredTimeRef.current = 0;
+      attemptPendingSeekEvent();
     };
     audio.addEventListener("loadedmetadata", syncMetadata);
     if (audio.readyState >= 1) syncMetadata();
@@ -686,7 +867,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  });
+  }, []);
 
   useEffect(() => {
     function clampPlayer() {
@@ -766,7 +947,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     const lyricsContainer = lyricsScrollRef.current;
     if (lyricsContainer === null || activeCueIndex < 0 || !lyricsExpanded || manualScrollTimeoutRef.current !== null) return;
     const activeLine = lyricsContainer.querySelector<HTMLElement>(`[data-cue-index="${activeCueIndex}"]`);
-    if (activeLine === null) return;
+    if (activeLine === null || typeof activeLine.scrollIntoView !== "function") return;
     autoScrollingRef.current = true;
     activeLine.scrollIntoView({ block: "nearest" });
     window.setTimeout(() => {
@@ -882,9 +1063,11 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     lyricsExpanded,
     lyricsStatus,
     movementUnlocked,
+    pendingSeekTime,
     unlockPlayerMovement,
     registerSocialFocus,
     seekTo,
+    seekStatus,
     setLyricsExpanded,
     showPlayer,
     togglePlayback,
@@ -895,36 +1078,15 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const hideAlternateMobileLyricsToggle = presentation === PLAYER_PRESENTATION.ALTERNATE
     && lyricsExpanded
     && (isCoarseLayout || isCoarseViewport());
+  const renderLyricCues = () => lyrics.map((cue, index) => (
+    <LyricCueButton active={index === activeCueIndex} cue={cue} inContext={Math.abs(index - activeCueIndex) <= 1} index={index} key={`${cue.id}-${cue.start}`} onSeek={seekTo} />
+  ));
+  const sliderValue = pendingSeekTime ?? currentTime;
 
   return (
     <BugCesantePlayerContext.Provider value={contextValue}>
        <div className="bug-cesante-player-scope" inert={lyricsExpanded && (isCoarseLayout || isCoarseViewport()) ? true : undefined}>{children}</div>
        <BugCesanteMobileSafeZone isActive={playerVisible} isMinimized={hidden} presentation={presentation} />
-      <audio
-        aria-hidden="true"
-        className="bug-cesante-audio"
-        onDurationChange={() => {
-          const audio = audioRef.current;
-          if (audio !== null) setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
-        }}
-        onEnded={() => {
-          setIsPlaying(false);
-          updateTime(0);
-          persist({ currentTime: 0, paused: true });
-        }}
-        onError={() => setIsPlaying(false)}
-        onPause={() => {
-          setIsPlaying(false);
-          persist({ currentTime: audioRef.current?.currentTime ?? currentTime, paused: true });
-        }}
-        onPlay={() => {
-          setIsPlaying(true);
-          persist({ paused: false });
-        }}
-        preload="metadata"
-        ref={audioRef}
-         src={withPublicPath(AUDIO_SRC)}
-      />
       {playerVisible ? (
           <aside
            aria-label="Reproductor persistente de Bug Cesante"
@@ -963,17 +1125,16 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
              <button aria-label="Reiniciar canción" className="bug-cesante-player-icon-button" onClick={() => seekTo(0)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.RESET; }} ref={resetRef} type="button"><PlayerIcon name="reset" /></button>
             <label className="bug-cesante-player-seek-label">
               <span className="visually-hidden">Posición de la canción</span>
-              <input aria-label="Posición de la canción" className="bug-cesante-player-seek" max={duration || 0} min="0" onChange={(event) => seekTo(Number(event.target.value))} step="0.01" type="range" value={Math.min(currentTime, duration || currentTime)} />
-            </label>
-            <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+               <input aria-label="Posición de la canción" aria-valuetext={pendingSeekTime === null ? formatTime(currentTime) : `Solicitando ${formatTime(pendingSeekTime)}. Tiempo actual ${formatTime(currentTime)}.`} className="bug-cesante-player-seek" data-seek-status={seekStatus} max={duration || 0} min="0" onChange={(event) => seekTo(Number(event.target.value))} step="0.01" type="range" value={Math.min(sliderValue, duration > 0 ? duration : sliderValue)} />
+             </label>
+             <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+              {pendingSeekTime === null ? null : <span aria-live="polite" className="visually-hidden">Buscando {formatTime(pendingSeekTime)}. El tiempo confirmado sigue en {formatTime(currentTime)}.</span>}
               {hideAlternateMobileLyricsToggle ? null : <button aria-controls="bug-cesante-lyrics-surface" aria-expanded={lyricsExpanded} aria-label={lyricsExpanded ? "Ocultar letra" : "Mostrar letra"} className="bug-cesante-player-lyrics-toggle" onClick={() => setLyricsExpanded(!lyricsExpanded)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.LYRICS; }} ref={lyricsToggleRef} type="button">{lyricsExpanded ? "Ocultar letra" : "Letra"}</button>}
            </div> : null}
             {!hidden && lyricsExpanded && !isCoarseLayout && !isCoarseViewport() ? <div className="bug-cesante-player-lyrics" id="bug-cesante-lyrics-surface" onScroll={markManualLyricsScroll} ref={lyricsScrollRef}>
              {lyricsStatus === LYRICS_STATUS.LOADING ? <p role="status">Cargando letra…</p> : null}
              {lyricsStatus === LYRICS_STATUS.UNAVAILABLE ? <p role="status">La letra no está disponible, pero la reproducción sigue activa.</p> : null}
-             {lyricsStatus === LYRICS_STATUS.READY ? lyrics.map((cue, index) => (
-               <p className={index === activeCueIndex ? "bug-cesante-lyric is-active" : "bug-cesante-lyric"} data-context={Math.abs(index - activeCueIndex) <= 1 ? "true" : "false"} data-cue-index={index} key={`${cue.id}-${cue.start}`}><span className="visually-hidden">{index === activeCueIndex ? "Línea actual: " : ""}</span>{cue.text}</p>
-             )) : null}
+              {lyricsStatus === LYRICS_STATUS.READY ? renderLyricCues() : null}
            </div> : null}
          </aside>
        ) : null}
@@ -988,9 +1149,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
         <div className="bug-cesante-player-lyrics" onScroll={markManualLyricsScroll} ref={lyricsScrollRef}>
           {lyricsStatus === LYRICS_STATUS.LOADING ? <p role="status">Cargando letra…</p> : null}
           {lyricsStatus === LYRICS_STATUS.UNAVAILABLE ? <p role="status">La letra no está disponible, pero la reproducción sigue activa.</p> : null}
-          {lyricsStatus === LYRICS_STATUS.READY ? lyrics.map((cue, index) => (
-            <p className={index === activeCueIndex ? "bug-cesante-lyric is-active" : "bug-cesante-lyric"} data-context={Math.abs(index - activeCueIndex) <= 1 ? "true" : "false"} data-cue-index={index} key={`${cue.id}-${cue.start}`}><span className="visually-hidden">{index === activeCueIndex ? "Línea actual: " : ""}</span>{cue.text}</p>
-          )) : null}
+           {lyricsStatus === LYRICS_STATUS.READY ? renderLyricCues() : null}
         </div>
       </section> : null}
     </BugCesantePlayerContext.Provider>

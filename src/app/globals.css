@@ -1249,10 +1249,6 @@ h2 {
   gap: 2rem;
 }
 
-.main-hall:has(.project-detail) > :not(.project-showcase) {
-  display: none;
-}
-
 .main-hall:has(.project-detail) > .main-hall-intro,
 .main-hall:has(.project-detail) > .main-hall-closing,
 .main-hall:has(.project-detail) > .hidden-chamber-controls,
@@ -6080,6 +6076,12 @@ h2 {
   align-content: center;
 }
 
+.professional-void-figure picture {
+  display: grid;
+  min-block-size: 0;
+  place-items: center;
+}
+
 .professional-void-figure {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -6094,7 +6096,7 @@ h2 {
   block-size: auto;
   max-block-size: 100%;
   min-block-size: 0;
-  aspect-ratio: 1471 / 1075;
+  aspect-ratio: 1004 / 951;
   justify-self: center;
   object-fit: contain;
   object-position: center;
@@ -6936,7 +6938,9 @@ h2 {
 .bug-cesante-player-seek {
   display: block;
   inline-size: 100%;
+  min-block-size: 2.75rem;
   accent-color: #f4f2ec;
+  touch-action: manipulation;
 }
 
 .bug-cesante-player-time {
@@ -6974,7 +6978,10 @@ h2 {
   scroll-behavior: smooth;
 }
 
-.bug-cesante-player-lyrics > p {
+.bug-cesante-player-lyrics > p,
+.bug-cesante-player-lyrics > button {
+  display: block;
+  inline-size: 100%;
   margin: 0;
   padding-block: 0.45rem;
   color: rgba(255, 250, 240, 0.52);
@@ -6983,11 +6990,27 @@ h2 {
   white-space: pre-wrap;
 }
 
-.bug-cesante-player-lyrics > p[data-context="true"] {
+.bug-cesante-player-lyrics > button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding-inline: 0.25rem;
+  text-align: start;
+  touch-action: manipulation;
+}
+
+.bug-cesante-player-lyrics > button:focus-visible {
+  outline: 0.1875rem solid var(--focus);
+  outline-offset: -0.125rem;
+}
+
+.bug-cesante-player-lyrics > p[data-context="true"],
+.bug-cesante-player-lyrics > button[data-context="true"] {
   color: rgba(255, 250, 240, 0.78);
 }
 
-.bug-cesante-player-lyrics > p.is-active {
+.bug-cesante-player-lyrics > p.is-active,
+.bug-cesante-player-lyrics > button.is-active {
   color: #fffaf0;
   font-weight: 700;
   text-shadow: 0 0 1rem rgba(255, 250, 240, 0.2);
@@ -7306,7 +7329,8 @@ h2 {
   padding: clamp(1rem, 4vw, 3rem) max(1rem, calc((100vw - 62ch) / 2));
 }
 
-.bug-cesante-lyrics-surface .bug-cesante-player-lyrics > p {
+.bug-cesante-lyrics-surface .bug-cesante-player-lyrics > p,
+.bug-cesante-lyrics-surface .bug-cesante-player-lyrics > button {
   font-size: clamp(1rem, 1rem + 0.5vw, 1.35rem);
   line-height: 1.32;
 }

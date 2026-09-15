@@ -88,6 +88,7 @@ const KEYBOARD_ACTIVATION_KEY = {
 } as const;
 
 const SEAL_ASSETS = ["/assets/overlays/vault/sello1.webp", "/assets/overlays/vault/sello2.webp", "/assets/overlays/vault/sello3.webp"] as const;
+const NAVIGATION_ASSETS = ["/assets/icons/left.webp", "/assets/icons/scroll.webp", "/assets/icons/right.webp"] as const;
 const SEAL_ASSET_STATUS = {
   PENDING: "pending",
   READY: "ready",
@@ -195,7 +196,7 @@ function isKeyboardActivationKey(key: string) {
   return key === KEYBOARD_ACTIVATION_KEY.ENTER || key === KEYBOARD_ACTIVATION_KEY.SPACE || key === KEYBOARD_ACTIVATION_KEY.SPACEBAR;
 }
 
-function loadIntroFrame(src: string, timeoutMs = INTRO_FRAME_LOAD_TIMEOUT_MS) {
+function loadIntroFrame(src: string, timeoutMs = INTRO_FRAME_LOAD_TIMEOUT_MS, priority: "high" | "low" = "low") {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new window.Image();
     const timeout = window.setTimeout(() => {
@@ -205,6 +206,7 @@ function loadIntroFrame(src: string, timeoutMs = INTRO_FRAME_LOAD_TIMEOUT_MS) {
     const cleanup = () => window.clearTimeout(timeout);
 
     image.decoding = "async";
+    image.fetchPriority = priority;
     image.onload = () => {
       cleanup();
       resolve(image);
@@ -217,25 +219,27 @@ function loadIntroFrame(src: string, timeoutMs = INTRO_FRAME_LOAD_TIMEOUT_MS) {
   });
 }
 
-function warmIntroFrameCache(sources: readonly string[], signal: AbortSignal) {
-  let nextSource = 0;
-  const init = { cache: "force-cache", priority: "low", signal } as RequestInit & { priority: "low" };
+function warmIntroFrameCache(
+  frameIndexes: readonly number[],
+  loadFrame: (frameIndex: number) => Promise<HTMLImageElement>,
+  signal: AbortSignal,
+) {
+  let nextFrame = 0;
   const warmNext = async () => {
     while (!signal.aborted) {
-      const src = sources[nextSource];
-      nextSource += 1;
-      if (src === undefined) return;
+      const frameIndex = frameIndexes[nextFrame];
+      nextFrame += 1;
+      if (frameIndex === undefined) return;
 
       try {
-        const response = await window.fetch(src, init);
-        await response.arrayBuffer();
+        await loadFrame(frameIndex);
       } catch {
         // Exact-frame loading retains the existing timeout, retry, and telemetry path.
       }
     }
   };
 
-  return Promise.all(Array.from({ length: Math.min(INTRO_FRAME_WARM_CONCURRENCY, sources.length) }, warmNext));
+  return Promise.all(Array.from({ length: Math.min(INTRO_FRAME_WARM_CONCURRENCY, frameIndexes.length) }, warmNext));
 }
 
 function preloadSealAsset(src: string, signal?: AbortSignal) {
@@ -265,6 +269,7 @@ function preloadSealAsset(src: string, signal?: AbortSignal) {
     const handleAbort = () => finish(false);
 
     image.decoding = "async";
+    image.fetchPriority = "low";
     image.onload = handleLoad;
     image.onerror = () => finish(false);
     signal?.addEventListener("abort", handleAbort, { once: true });
@@ -298,7 +303,7 @@ function VaultShellIsland() {
   const [openingProgressViewport, setOpeningProgressViewport] = useState<OpeningProgressViewport>({ width: 1280, height: 720 });
   const openVaultCanvasRef = useRef<HTMLCanvasElement>(null);
   const openVaultFramesRef = useRef(new Map<number, HTMLImageElement>());
-  const pendingIntroFramesRef = useRef(new Map<number, { desiredRequest?: IntroFrameRequest }>());
+  const pendingIntroFramesRef = useRef(new Map<number, Promise<HTMLImageElement>>());
   const introFrameRetryCountsRef = useRef(new Map<number, number>());
   const introFrameCoordinatorRef = useRef(createIntroFrameCoordinator());
   const introDegradedRef = useRef(false);
@@ -313,6 +318,7 @@ function VaultShellIsland() {
   const touchIntroHandoffLockedRef = useRef(false);
   const shellRef = useRef<HTMLElement>(null);
   const mainHallRef = useRef<HTMLElement>(null);
+  const wasUnlockedRef = useRef(false);
   const vaultVisualStageRef = useRef<HTMLDivElement>(null);
   const vaultArtPlaneRef = useRef<HTMLDivElement>(null);
   const sealDialogRef = useRef<HTMLElement>(null);
@@ -330,6 +336,7 @@ function VaultShellIsland() {
   const [cinematicFailure, setCinematicFailure] = useState(false);
   const [sealAssetStatuses, setSealAssetStatuses] = useState<SealAssetStatus[]>(() => SEAL_ASSETS.map(() => SEAL_ASSET_STATUS.PENDING));
   const [sealHandoffGraceElapsed, setSealHandoffGraceElapsed] = useState(false);
+  const sealWarmupPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const introCompleteMarkedRef = useRef(false);
   const sealUiMountedMarkedRef = useRef(false);
   const activeStep = getVaultStep(state.activeIndex);
@@ -436,7 +443,7 @@ function VaultShellIsland() {
     let cancelled = false;
     const preloadController = new AbortController();
 
-    void Promise.all(SEAL_ASSETS.map(async (src, index) => {
+    const sealWarmup = Promise.all(SEAL_ASSETS.map(async (src, index) => {
       const ready = await preloadSealAsset(withPublicPath(src), preloadController.signal);
 
       if (cancelled) return;
@@ -444,7 +451,9 @@ function VaultShellIsland() {
       setSealAssetStatuses((statuses) => statuses.map((status, statusIndex) => (
         statusIndex === index ? (ready ? SEAL_ASSET_STATUS.READY : SEAL_ASSET_STATUS.FAILED) : status
       )));
-    })).then(() => {
+    }));
+    sealWarmupPromiseRef.current = sealWarmup.then(() => undefined);
+    void sealWarmup.then(() => {
       if (!cancelled) markSealPerformance("seal-preload-complete");
     });
 
@@ -497,6 +506,46 @@ function VaultShellIsland() {
 
     setIntroProgress(progress);
   };
+
+  const cacheIntroFrame = (frameIndex: number, frame: HTMLImageElement) => {
+    const frames = openVaultFramesRef.current;
+    frames.set(frameIndex, frame);
+    const cacheCenter = introFrameCoordinatorRef.current.getCurrentRequest()?.frameIndex ?? frameIndex;
+    while (frames.size > INTRO_FRAME_CACHE_SIZE) {
+      const furthestFrame = [...frames.keys()].sort(
+        (left, right) => Math.abs(right - cacheCenter) - Math.abs(left - cacheCenter),
+      )[0];
+
+      if (furthestFrame === undefined) break;
+      frames.delete(furthestFrame);
+    }
+
+    setIntroLoadedFrames(frames.size);
+  };
+
+  const loadIntroFrameIntoCache = (frameIndex: number, priority: "high" | "low" = "low") => {
+    const config = introFrameConfigRef.current;
+    const cached = openVaultFramesRef.current.get(frameIndex);
+    if (cached !== undefined) return Promise.resolve(cached);
+    if (config === null) return Promise.reject(new Error("Intro frame configuration is unavailable."));
+
+    const pending = pendingIntroFramesRef.current.get(frameIndex);
+    if (pending !== undefined) return pending;
+
+    const frameLoad = loadIntroFrame(getIntroFrameSrc(config.folder, frameIndex), INTRO_FRAME_LOAD_TIMEOUT_MS, priority)
+      .then((frame) => {
+        cacheIntroFrame(frameIndex, frame);
+        return frame;
+      })
+      .finally(() => {
+        if (pendingIntroFramesRef.current.get(frameIndex) === frameLoad) {
+          pendingIntroFramesRef.current.delete(frameIndex);
+        }
+      });
+    pendingIntroFramesRef.current.set(frameIndex, frameLoad);
+    return frameLoad;
+  };
+  const loadIntroFrameIntoCacheEvent = useEffectEvent(loadIntroFrameIntoCache);
 
   const drawIntroFrame = (request: IntroFrameRequest, renderedFrameIndex = request.frameIndex) => {
     const canvas = openVaultCanvasRef.current;
@@ -590,41 +639,12 @@ function VaultShellIsland() {
       return;
     }
 
-    const pending = pendingIntroFramesRef.current.get(frameIndex);
-
-    if (pending !== undefined) {
-      pending.desiredRequest = request;
-      return;
-    }
-
-    const pendingFrame = { desiredRequest: request };
-    pendingIntroFramesRef.current.set(frameIndex, pendingFrame);
-    void loadIntroFrame(getIntroFrameSrc(config.folder, frameIndex))
-      .then((frame) => {
-        const frames = openVaultFramesRef.current;
-        frames.set(frameIndex, frame);
+    void loadIntroFrameIntoCache(frameIndex, "high")
+      .then(() => {
         introFrameRetryCountsRef.current.delete(frameIndex);
-
-        const cacheCenter = introFrameCoordinatorRef.current.getCurrentRequest()?.frameIndex ?? frameIndex;
-        while (frames.size > INTRO_FRAME_CACHE_SIZE) {
-          const furthestFrame = [...frames.keys()].sort(
-            (left, right) => Math.abs(right - cacheCenter) - Math.abs(left - cacheCenter),
-          )[0];
-
-          if (furthestFrame === undefined) {
-            break;
-          }
-
-          frames.delete(furthestFrame);
-        }
-
-        setIntroLoadedFrames(frames.size);
-
-        const latestRequest = pendingFrame.desiredRequest;
-
-        if (latestRequest !== undefined && introFrameCoordinatorRef.current.isCurrent(latestRequest) && drawIntroFrame(latestRequest) && introDegradedRef.current) {
+        if (introFrameCoordinatorRef.current.isCurrent(request) && drawIntroFrame(request) && introDegradedRef.current) {
           introDegradedRef.current = false;
-          reportBrowserObservation({ kind: "frame-recovery", name: "intro-frame", assetIndex: latestRequest.frameIndex, assetType: "intro-frame" });
+          reportBrowserObservation({ kind: "frame-recovery", name: "intro-frame", assetIndex: request.frameIndex, assetType: "intro-frame" });
         }
       })
       .catch((error: unknown) => {
@@ -653,55 +673,19 @@ function VaultShellIsland() {
           }
         }
       })
-      .finally(() => {
-        if (pendingIntroFramesRef.current.get(frameIndex) === pendingFrame) {
-          pendingIntroFramesRef.current.delete(frameIndex);
-        }
-      });
   };
 
   const requestIntroFrameForEffect = (frameIndex: number) => {
     const config = introFrameConfigRef.current;
 
-    if (config === null || frameIndex < 0 || frameIndex >= config.frameCount || openVaultFramesRef.current.has(frameIndex) || pendingIntroFramesRef.current.has(frameIndex)) {
+    if (config === null || frameIndex < 0 || frameIndex >= config.frameCount || openVaultFramesRef.current.has(frameIndex)) {
       return;
     }
 
-    const pendingFrame: { desiredRequest?: IntroFrameRequest } = {};
-    pendingIntroFramesRef.current.set(frameIndex, pendingFrame);
-    void loadIntroFrame(getIntroFrameSrc(config.folder, frameIndex))
-      .then((frame) => {
-        const frames = openVaultFramesRef.current;
-        frames.set(frameIndex, frame);
-        const cacheCenter = introFrameCoordinatorRef.current.getCurrentRequest()?.frameIndex ?? frameIndex;
-        while (frames.size > INTRO_FRAME_CACHE_SIZE) {
-          const furthestFrame = [...frames.keys()].sort(
-            (left, right) => Math.abs(right - cacheCenter) - Math.abs(left - cacheCenter),
-          )[0];
-          if (furthestFrame === undefined) break;
-          frames.delete(furthestFrame);
-        }
-
-        const latestRequest = pendingFrame.desiredRequest;
-
-        if (latestRequest !== undefined && introFrameCoordinatorRef.current.isCurrent(latestRequest)) {
-          drawIntroFrame(latestRequest);
-        }
-      })
-        .catch((error: unknown) => {
-          const isTimeout = error instanceof Error && error.message.startsWith("Timed out");
-          reportBrowserObservation({ kind: isTimeout ? "frame-timeout" : "frame-error", name: "intro-frame", assetIndex: frameIndex, assetType: "intro-frame" });
-          const retryCount = introFrameRetryCountsRef.current.get(frameIndex) ?? 0;
-          if (retryCount < INTRO_FRAME_RETRY_LIMIT) {
-            introFrameRetryCountsRef.current.set(frameIndex, retryCount + 1);
-            window.setTimeout(() => requestIntroFrameForEffect(frameIndex), INTRO_FRAME_RETRY_DELAY_MS);
-          }
-        })
-      .finally(() => {
-        if (pendingIntroFramesRef.current.get(frameIndex) === pendingFrame) {
-          pendingIntroFramesRef.current.delete(frameIndex);
-        }
-      });
+    void loadIntroFrameIntoCache(frameIndex).catch((error: unknown) => {
+      const isTimeout = error instanceof Error && error.message.startsWith("Timed out");
+      reportBrowserObservation({ kind: isTimeout ? "frame-timeout" : "frame-error", name: "intro-frame", assetIndex: frameIndex, assetType: "intro-frame" });
+    });
   };
 
   const drawIntroProgressForEffect = useEffectEvent((progress: number) => {
@@ -872,7 +856,7 @@ function VaultShellIsland() {
       let firstFrame: HTMLImageElement;
 
       try {
-        firstFrame = await loadIntroFrame(getIntroFrameSrc(config.folder, 0));
+        firstFrame = await loadIntroFrameIntoCacheEvent(0, "high");
       } catch (error: unknown) {
         if (!cancelled) {
           const isTimeout = error instanceof Error && error.message.startsWith("Timed out");
@@ -896,8 +880,13 @@ function VaultShellIsland() {
       drawIntroProgressForEffect(introFrameProgressRef.current);
       setOpenVaultReady(true);
 
+      await sealWarmupPromiseRef.current;
+      if (cancelled) return;
+      await Promise.all(NAVIGATION_ASSETS.map((src) => preloadSealAsset(withPublicPath(src), warmController.signal)));
+      if (cancelled) return;
       void warmIntroFrameCache(
-        Array.from({ length: config.frameCount - 1 }, (_, index) => getIntroFrameSrc(config.folder, index + 1)),
+        Array.from({ length: config.frameCount - 1 }, (_, index) => index + 1),
+        (frameIndex) => loadIntroFrameIntoCacheEvent(frameIndex),
         warmController.signal,
       );
     };
@@ -919,8 +908,13 @@ function VaultShellIsland() {
   }, [motionPreferences.reducedMotion]);
 
   useEffect(() => {
+    const becameUnlocked = state.unlocked && !wasUnlockedRef.current;
+    wasUnlockedRef.current = state.unlocked;
+
     if (state.unlocked) {
-      mainHallRef.current?.focus();
+      const query = new URLSearchParams(window.location.search);
+      const isShowcaseUrl = query.get("view") === "showcase" || query.has("project") || query.has("tech");
+      if (becameUnlocked && !isShowcaseUrl) mainHallRef.current?.focus();
       return;
     }
 
@@ -1180,6 +1174,12 @@ function VaultShellIsland() {
     commitProgression(issueAlternateHandoff(progressionRef.current));
   };
 
+  const handleAlternatePortfolioPointerDown = (event: PointerEvent<HTMLAnchorElement>) => {
+    event.stopPropagation();
+    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    commitProgression(issueAlternateHandoff(progressionRef.current));
+  };
+
   const handleIntroPointerMove = (event: PointerEvent<HTMLElement>) => {
     const pointer = introPointerRef.current;
     if (pointer === null || pointer.id !== event.pointerId || cinematicRequested || state.unlocked || introComplete) {
@@ -1227,8 +1227,7 @@ function VaultShellIsland() {
     }
   };
 
-  useEffect(() => {
-    const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+  const handleWindowKeyDownEvent = useEffectEvent((event: globalThis.KeyboardEvent) => {
       if (isProjectModalOpen || cinematicRequested) {
         return;
       }
@@ -1246,25 +1245,25 @@ function VaultShellIsland() {
       }
 
       handleKeyboardInput(event.key);
-    };
+    });
 
-    const handleWindowKeyUp = (event: globalThis.KeyboardEvent) => {
+  const handleWindowKeyUpEvent = useEffectEvent((event: globalThis.KeyboardEvent) => {
       if (keyboardHandoffLockedKeyRef.current === event.key) {
         keyboardHandoffLockedKeyRef.current = null;
       }
-    };
-
-    window.addEventListener("keydown", handleWindowKeyDown);
-    window.addEventListener("keyup", handleWindowKeyUp);
-
-    return () => {
-      window.removeEventListener("keydown", handleWindowKeyDown);
-      window.removeEventListener("keyup", handleWindowKeyUp);
-    };
-  });
+    });
 
   useEffect(() => {
-      const handleWindowWheel = (event: globalThis.WheelEvent) => {
+    window.addEventListener("keydown", handleWindowKeyDownEvent);
+    window.addEventListener("keyup", handleWindowKeyUpEvent);
+
+    return () => {
+      window.removeEventListener("keydown", handleWindowKeyDownEvent);
+      window.removeEventListener("keyup", handleWindowKeyUpEvent);
+    };
+  }, []);
+
+  const handleWindowWheelEvent = useEffectEvent((event: globalThis.WheelEvent) => {
         if (isProjectModalOpen) {
           if (!(event.target instanceof Element && event.target.closest("dialog, [role='dialog']") !== null)) {
             event.preventDefault();
@@ -1282,12 +1281,13 @@ function VaultShellIsland() {
       }
 
       handleWheelDelta(normalizeWheelDeltaPixels(event));
-    };
+    });
 
-    window.addEventListener("wheel", handleWindowWheel, { passive: false });
+  useEffect(() => {
+    window.addEventListener("wheel", handleWindowWheelEvent, { passive: false });
 
-    return () => window.removeEventListener("wheel", handleWindowWheel);
-  });
+    return () => window.removeEventListener("wheel", handleWindowWheelEvent);
+  }, []);
 
   useEffect(() => {
     const artPlane = vaultArtPlaneRef.current;
@@ -1339,6 +1339,7 @@ function VaultShellIsland() {
       aria-labelledby="vault-shell-title"
       className="vault-shell"
       data-cinematic-requested={cinematicRequested}
+      data-client-ready={progressionHydrated}
       data-project-modal-open={isProjectModalOpen}
       data-seal-dialog-open={isSealDialogOpen}
       data-unlocked={state.unlocked}
@@ -1413,7 +1414,7 @@ function VaultShellIsland() {
                       className="vault-alternate-portfolio-link button button-primary"
                       href="/portfolio"
                       onClick={handleAlternatePortfolioClick}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      onPointerDown={handleAlternatePortfolioPointerDown}
                       prefetch={false}
                     >
                      <span>VERSIÓN MINIMALISTA</span>
@@ -1445,9 +1446,9 @@ function VaultShellIsland() {
                       </span>
                     ) : (
                       <>
-                         <Image className="vault-intro-action-icon" src={withPublicPath("/assets/icons/left.png")} alt="" width={72} height={72} />
-                         <Image className="vault-intro-action-icon vault-intro-action-icon-scroll" src={withPublicPath("/assets/icons/scroll.png")} alt="" width={72} height={72} />
-                         <Image className="vault-intro-action-icon" src={withPublicPath("/assets/icons/right.png")} alt="" width={72} height={72} />
+                          <Image className="vault-intro-action-icon" src={withPublicPath("/assets/icons/left.webp")} alt="" width={72} height={72} />
+                          <Image className="vault-intro-action-icon vault-intro-action-icon-scroll" src={withPublicPath("/assets/icons/scroll.webp")} alt="" width={72} height={72} />
+                          <Image className="vault-intro-action-icon" src={withPublicPath("/assets/icons/right.webp")} alt="" width={72} height={72} />
                       </>
                     )}
                   </p>
@@ -1504,10 +1505,10 @@ function VaultShellIsland() {
                 </div>
                 <div className="vault-seal-carousel-controls" aria-label="Navegación de sellos" style={vaultArtPlaneStyle}>
                   <button className="vault-seal-arrow-control" aria-label="Sello anterior" onClick={() => advanceVault(VAULT_INPUT.PREVIOUS)} type="button">
-                     <Image className="vault-seal-arrow-icon" src={withPublicPath("/assets/icons/left.png")} alt="" aria-hidden="true" width={72} height={72} />
+                      <Image className="vault-seal-arrow-icon" src={withPublicPath("/assets/icons/left.webp")} alt="" aria-hidden="true" width={72} height={72} />
                   </button>
                   <button className="vault-seal-arrow-control" aria-label="Siguiente sello" onClick={() => advanceVault(VAULT_INPUT.NEXT)} type="button">
-                     <Image className="vault-seal-arrow-icon" src={withPublicPath("/assets/icons/right.png")} alt="" aria-hidden="true" width={72} height={72} />
+                      <Image className="vault-seal-arrow-icon" src={withPublicPath("/assets/icons/right.webp")} alt="" aria-hidden="true" width={72} height={72} />
                   </button>
                 </div>
                 <div className="vault-riddle-panel">
