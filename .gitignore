@@ -1,0 +1,73 @@
+# Dependencies and build output
+/node_modules/
+/.next/
+/dist/
+/build/
+/out/
+
+# Local environment
+/.env
+/.env.*
+!/.env.example
+/.secrets/
+/secrets/
+*.key
+*.pem
+
+# Test and browser output
+/test-results/
+/playwright-report/
+/coverage/
+/.playwright-mcp/
+
+# Internal planning and agent artifacts
+/openspec/
+/.atl/
+/.codegraph/
+/docs/
+!/docs/
+!/docs/screenshots/
+!/docs/screenshots/*.png
+/skills/
+/.opencode/
+/.git/
+
+# Logs and caches
+*.log
+*.tsbuildinfo
+/.cache/
+/.turbo/
+/tmp/
+/temp/
+
+# Root-only QA screenshots, runtime evidence, and temporary media
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webm
+/*.mp4
+/*.json
+/*.txt
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Unused local source/reference assets
+/public/assets/intro/openVault.webm
+!/public/assets/intro/kurOpenVault.webm
+!/public/assets/intro/kurOpenVault-poster.webp
+/public/assets/video/
+/public/assets/icons/swipe/*
+!/public/assets/icons/swipe/swipedown_00000.png
+!/public/assets/icons/swipe/swipeup_00000.png
+/public/assets/reference/
+/public/assets/compositions/
+/public/assets/effects/
+/public/assets/characters/
+/public/assets/scenes/main-hall/

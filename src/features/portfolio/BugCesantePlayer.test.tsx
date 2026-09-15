@@ -1,0 +1,402 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, useEffect, useEffectEvent } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BugCesantePlayerProvider, parseWebVtt, PLAYER_PRESENTATION, PlayerMovementLegend, useBugCesantePlayer } from "./BugCesantePlayer";
+
+const PRIMARY_PLAYER_STORAGE_KEY = "kuroneko:bug-cesante-player";
+
+function PlayerHarness() {
+  const { activatePlayer } = useBugCesantePlayer();
+
+  return <button onClick={() => activatePlayer()} type="button">Activar reproductor</button>;
+}
+
+function AutoActivatingPlayerHarness() {
+  const { activatePlayer } = useBugCesantePlayer();
+  const activate = useEffectEvent(activatePlayer);
+
+  useEffect(() => {
+    activate();
+  }, []);
+
+  return null;
+}
+
+function MovementHarness() {
+  const { activatePlayer, movementUnlocked, unlockPlayerMovement } = useBugCesantePlayer();
+
+  return <>
+    <button onClick={() => activatePlayer()} type="button">Activar reproductor</button>
+    <button onClick={unlockPlayerMovement} type="button">Desbloquear movimiento</button>
+    {movementUnlocked ? <PlayerMovementLegend /> : null}
+  </>;
+}
+
+function stubSuccessfulPlayback() {
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
+    Object.defineProperty(this, "paused", { configurable: true, value: false });
+    this.dispatchEvent(new Event("play"));
+    return Promise.resolve();
+  });
+  const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) {
+    Object.defineProperty(this, "paused", { configurable: true, value: true });
+    this.dispatchEvent(new Event("pause"));
+  });
+
+  return { pause, play };
+}
+
+describe("BugCesantePlayerProvider", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("Lyrics are not needed for this test."))));
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("minimizes without unmounting and restores the controls", async () => {
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    const player = screen.getByRole("complementary", { name: "Reproductor persistente de Bug Cesante" });
+    const minimize = screen.getByRole("button", { name: "Minimizar reproductor" });
+
+    await user.click(minimize);
+    expect(player).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restaurar reproductor" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Reproducir canción" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Restaurar reproductor" }));
+    expect(screen.getByRole("button", { name: "Minimizar reproductor" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Reproducir canción" })).toBeInTheDocument();
+  });
+
+  it("mounts the mobile safe zone only with the activated player", async () => {
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    expect(screen.queryByRole("complementary", { name: "Reproductor persistente de Bug Cesante" })).not.toBeInTheDocument();
+    expect(document.querySelector(".mobile-control-safe-zone")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    expect(document.querySelector(".mobile-control-safe-zone[data-presentation='primary']")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Minimizar reproductor" }));
+    expect(document.querySelector(".mobile-control-safe-zone[data-presentation='primary']")).toBeInTheDocument();
+  });
+
+  it("supports alternate presentation without changing primary discovery activation", async () => {
+    const forced = render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    expect(await screen.findByRole("complementary", { name: "Reproductor persistente de Bug Cesante" })).toBeInTheDocument();
+    expect(document.querySelector(".mobile-control-safe-zone[data-presentation='alternate']")).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("kuroneko:bug-cesante-player:alternate")).toBeNull();
+    forced.unmount();
+
+    window.sessionStorage.setItem("kuroneko:bug-cesante-player", JSON.stringify({
+      activated: true,
+      currentTime: 0,
+      hidden: false,
+      lyricsExpanded: false,
+      paused: true,
+      position: null,
+    }));
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    expect(await screen.findByRole("complementary", { name: "Reproductor persistente de Bug Cesante" })).toBeInTheDocument();
+  });
+
+  it("does not attempt alternate playback on mount", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Reproducir canción" })).toBeInTheDocument();
+    expect(play).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Pausar canción" })).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(PRIMARY_PLAYER_STORAGE_KEY)).toBeNull();
+  });
+
+  it("starts alternate playback only after explicit Play", async () => {
+    const user = userEvent.setup();
+    const { pause, play } = stubSuccessfulPlayback();
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    const playButton = await screen.findByRole("button", { name: "Reproducir canción" });
+    expect(play).not.toHaveBeenCalled();
+    await user.click(playButton);
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Pausar canción" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Pausar canción" }));
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Reproducir canción" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reproducir canción" }));
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Pausar canción" })).toBeInTheDocument();
+    expect(window.sessionStorage.getItem(PRIMARY_PLAYER_STORAGE_KEY)).toBeNull();
+  });
+
+  it("keeps an alternate stored playing state paused on mount", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    window.sessionStorage.setItem("kuroneko:bug-cesante-player:alternate", JSON.stringify({
+      activated: true,
+      currentTime: 12.5,
+      hidden: false,
+      lyricsExpanded: false,
+      paused: false,
+      position: null,
+    }));
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Reproducir canción" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pausar canción" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("0:12 / 0:00", { exact: true })).toBeInTheDocument());
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("preserves primary storage byte-for-byte through alternate player interactions", async () => {
+    const primaryState = '{ "activated": true, "currentTime": 12.5, "hidden": false, "lyricsExpanded": false, "paused": true, "position": null }';
+    window.sessionStorage.setItem(PRIMARY_PLAYER_STORAGE_KEY, primaryState);
+    const user = userEvent.setup();
+    stubSuccessfulPlayback();
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    const playButton = await screen.findByRole("button", { name: "Reproducir canción" });
+    await user.click(playButton);
+    expect(screen.getByRole("button", { name: "Pausar canción" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Pausar canción" }));
+    await user.click(screen.getByRole("button", { name: "Reproducir canción" }));
+    await user.click(screen.getByRole("button", { name: "Reiniciar canción" }));
+    await user.click(screen.getByRole("button", { name: "Mostrar letra" }));
+    await user.click(screen.getByRole("button", { name: "Ocultar letra" }));
+
+    expect(window.sessionStorage.getItem(PRIMARY_PLAYER_STORAGE_KEY)).toBe(primaryState);
+  });
+
+  it("keeps the first client snapshot equal to SSR before restoring persisted state", async () => {
+    window.sessionStorage.setItem(
+      "kuroneko:bug-cesante-player",
+      JSON.stringify({
+        activated: true,
+        currentTime: 12.5,
+        hidden: false,
+        lyricsExpanded: false,
+        paused: true,
+        position: null,
+      }),
+    );
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockReturnValue(null);
+    const serverMarkup = renderToString(
+      <BugCesantePlayerProvider>
+        <AutoActivatingPlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+    getItem.mockRestore();
+
+    const container = document.createElement("div");
+    container.innerHTML = serverMarkup;
+    document.body.appendChild(container);
+    const hydrationErrors: unknown[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => {
+      hydrationErrors.push(args);
+    });
+    const root = hydrateRoot(
+      container,
+      <BugCesantePlayerProvider>
+        <AutoActivatingPlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(hydrationErrors).toEqual([]);
+    expect(screen.queryByRole("complementary", { name: "Reproductor persistente de Bug Cesante" })).toBeInTheDocument();
+    expect(JSON.parse(window.sessionStorage.getItem("kuroneko:bug-cesante-player") ?? "{}")).toMatchObject({ currentTime: 12.5 });
+    root.unmount();
+    container.remove();
+    consoleError.mockRestore();
+  });
+
+  it("focuses the remembered bottom control after ArrowDown restores a minimized player", async () => {
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    const play = screen.getByRole("button", { name: "Reproducir canción" });
+    play.focus();
+    await user.keyboard("{ArrowUp}");
+
+    const minimize = screen.getByRole("button", { name: "Minimizar reproductor" });
+    expect(minimize).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    const restore = screen.getByRole("button", { name: "Restaurar reproductor" });
+    expect(restore).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+
+    const restoredPlay = await screen.findByRole("button", { name: "Reproducir canción" });
+    await waitFor(() => expect(restoredPlay).toHaveFocus());
+  });
+
+  it("keeps lyrics inside the player on desktop", async () => {
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    await user.click(screen.getByRole("button", { name: "Mostrar letra" }));
+
+    const player = screen.getByRole("complementary", { name: "Reproductor persistente de Bug Cesante" });
+    expect(screen.queryByRole("dialog", { name: "Letra de Bug Cesante" })).not.toBeInTheDocument();
+    expect(player.querySelector("#bug-cesante-lyrics-surface")).toBeInTheDocument();
+  });
+
+  it("parses the authorized lyrics with valid monotonic cues and copy anchors", () => {
+    const source = readFileSync(resolve(process.cwd(), "public/assets/audio/bug-cesante.lyrics.vtt"), "utf8");
+    const cues = parseWebVtt(source);
+    const timingLines = source.match(/^\S+\s+-->\s+\S+$/gmu) ?? [];
+    const startTimes = timingLines.map((line) => {
+      const timestamp = line.split("-->")[0]?.trim() ?? "";
+      return timestamp.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+    });
+
+    expect(source.startsWith("WEBVTT")).toBe(true);
+    expect(cues).toHaveLength(timingLines.length);
+    expect(startTimes.slice(1).every((start, index) => start >= (startTimes[index] ?? 0))).toBe(true);
+    expect(cues.every((cue) => cue.end > cue.start)).toBe(true);
+    expect(cues.slice(1).every((cue, index) => cue.start >= (cues[index]?.start ?? 0))).toBe(true);
+    expect(cues[0]?.text).toBe("Desde el mejor país de Chile...");
+    expect(cues.some((cue) => cue.text.includes("¡QUÉ BUEN DESARROLLADOR!"))).toBe(true);
+    expect(cues.at(-1)?.text).toBe("Nos vemos el lunes.");
+  });
+
+  it("locks focus in the mobile lyrics surface and restores it after Escape", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      addEventListener: vi.fn(),
+      addListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: true,
+      media: "(max-width: 48rem), (pointer: coarse)",
+      onchange: null,
+      removeEventListener: vi.fn(),
+      removeListener: vi.fn(),
+    })));
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><PlayerHarness /></BugCesantePlayerProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    const lyricsButton = screen.getByRole("button", { name: "Mostrar letra" });
+    await user.click(lyricsButton);
+
+    const lyricsSurface = await screen.findByRole("dialog", { name: "Letra de Bug Cesante" });
+    expect(lyricsSurface).toHaveAttribute("aria-modal", "true");
+    await waitFor(() => expect(within(lyricsSurface).getByRole("button", { name: "Ocultar letra" })).toHaveFocus());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Letra de Bug Cesante" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Mostrar letra" })).toHaveFocus();
+  });
+
+  it("opens the alternate lyrics surface without restoring the primary title", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      addEventListener: vi.fn(),
+      addListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: true,
+      media: "(max-width: 48rem), (pointer: coarse)",
+      onchange: null,
+      removeEventListener: vi.fn(),
+      removeListener: vi.fn(),
+    })));
+    const user = userEvent.setup();
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    const player = await screen.findByRole("complementary", {
+      name: "Reproductor persistente de Bug Cesante",
+    });
+    expect(player.querySelector(".bug-cesante-player-title")).not.toBeInTheDocument();
+    const lyricsButton = screen.getByRole("button", { name: "Mostrar letra" });
+    await user.click(lyricsButton);
+
+    const lyricsSurface = await screen.findByRole("dialog", { name: "Letra de Bug Cesante" });
+    expect(lyricsSurface).toHaveAttribute("data-presentation", PLAYER_PRESENTATION.ALTERNATE);
+    expect(within(lyricsSurface).queryByText("BUG CESANTE", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Ocultar letra" })).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Letra de Bug Cesante" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Mostrar letra" })).toHaveFocus();
+  });
+
+  it("gates the movement legend and M+arrow mode until Void unlocks it", async () => {
+    const user = userEvent.setup();
+    render(<BugCesantePlayerProvider><MovementHarness /></BugCesantePlayerProvider>);
+
+    expect(screen.queryByRole("complementary", { name: "Guía para mover el reproductor" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Activar reproductor" }));
+    const player = screen.getByRole("complementary", { name: "Reproductor persistente de Bug Cesante" });
+    fireEvent.keyDown(window, { code: "KeyM", key: "m" });
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(player).not.toHaveAttribute("data-positioned");
+    fireEvent.keyUp(window, { code: "KeyM", key: "m" });
+
+    await user.click(screen.getByRole("button", { name: "Desbloquear movimiento" }));
+    expect(screen.getByRole("complementary", { name: "Guía para mover el reproductor" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { code: "KeyM", key: "m" });
+    fireEvent.keyDown(window, { code: "ArrowRight", key: "ArrowRight" });
+    expect(player).toHaveAttribute("data-positioned", "true");
+    fireEvent.keyUp(window, { code: "KeyM", key: "m" });
+  });
+
+  it("keeps the Void movement unlock through a provider remount but resets when its session key is absent", async () => {
+    const { unmount } = render(<BugCesantePlayerProvider><MovementHarness /></BugCesantePlayerProvider>);
+    const unlock = screen.getByRole("button", { name: "Desbloquear movimiento" });
+    await userEvent.setup().click(unlock);
+    expect(window.sessionStorage.getItem("kuroneko:bug-cesante-player-movement:v1")).toBe("unlocked");
+    unmount();
+
+    const secondRender = render(<BugCesantePlayerProvider><MovementHarness /></BugCesantePlayerProvider>);
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Guía para mover el reproductor" })).toBeInTheDocument());
+
+    window.sessionStorage.removeItem("kuroneko:bug-cesante-player-movement:v1");
+    secondRender.unmount();
+    render(<BugCesantePlayerProvider><MovementHarness /></BugCesantePlayerProvider>);
+    expect(screen.queryByRole("complementary", { name: "Guía para mover el reproductor" })).not.toBeInTheDocument();
+  });
+});
