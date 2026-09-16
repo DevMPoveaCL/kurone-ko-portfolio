@@ -225,6 +225,12 @@ describe("AlternatePortfolio", () => {
     expect(css).toContain('.portfolio-alternate-card[data-destination="linked"]');
     expect(css).toContain('.portfolio-alternate-card[data-destination="development"]');
     expect(css).toContain('inline-size: min(24rem, calc(100vw - 2rem));');
+    expect(css).toContain("--portfolio-alternate-card-action-size: 2.75rem;");
+    expect(css).toContain("--portfolio-alternate-card-edge-inset: 0.55rem;");
+    expect(css).toContain("--portfolio-alternate-card-readability-gap: 0.5rem;");
+    expect(css).toContain("--portfolio-alternate-card-action-lane:");
+    expect(css).toContain("padding-inline-end: var(--portfolio-alternate-card-action-lane);");
+    expect(css).not.toContain("padding-inline-end: 2.65rem;");
     expect(css).toContain("outline: none;");
     expect(css).toContain("box-shadow: inset 0 0 0 0.1875rem var(--focus);");
     expect(css).not.toContain('inline-size: min(38rem, calc(100vw - 2rem));');

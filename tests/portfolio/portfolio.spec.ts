@@ -790,7 +790,7 @@ test.describe("Immersive accessible portfolio", () => {
             throw new Error("Alternate layout probes are unavailable.");
           }
           const rect = (element: HTMLElement) => element.getBoundingClientRect();
-          const intersects = (left: DOMRect, right: DOMRect) =>
+          const intersects = (left: DOMRect, right: { bottom: number; left: number; right: number; top: number }) =>
             left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
           const playerRect = rect(player);
           const identityRect = rect(identity);
@@ -869,10 +869,12 @@ test.describe("Immersive accessible portfolio", () => {
       ];
 
       await page.setViewportSize(viewports[0]!);
+      await portfolio.seedValidProgression({ alternateResidency: "active" });
       await portfolio.gotoPortfolio();
       await expect(portfolio.alternateEntry).toBeVisible();
       await portfolio.alternateEntry.click();
-      await expect(portfolio.alternateCards).toHaveCount(13);
+      await expect(page).toHaveURL(/\/portfolio\/$/);
+      await expect(portfolio.alternateCards).toHaveCount(13, { timeout: 30_000 });
 
       const contentSnapshot = await page.evaluate(() => ({
         cards: [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-card")].map((card) => card.querySelector("h2")?.textContent),
@@ -914,6 +916,7 @@ test.describe("Immersive accessible portfolio", () => {
           playerNavOverlap: intersects(playerRect, navRect),
           playerParentIsOutlet: player.parentElement === outlet,
           playerPosition: getComputedStyle(player).position,
+          headerRowTops: [...new Set([playerRect.top, identityRect.top, navRect.top].map((top) => Math.round(top)))],
           targetsMeetMinimum: targets.every(({ height, width }) => height >= 44 && width >= 44),
           viewport: { height: window.innerHeight, width: window.innerWidth },
         };
@@ -935,9 +938,57 @@ test.describe("Immersive accessible portfolio", () => {
         expect(metrics.outletDisplay).toBe(mode === "mobile" ? "contents" : "grid");
         expect(metrics.playerPosition).toBe(mode === "mobile" ? "fixed" : "relative");
         if (mode === "intermediate") {
+          expect(metrics.headerRowTops, `${viewport.width}px header row bands`).toHaveLength(2);
+          expect(metrics.headerRowTops[0]).toBeLessThan(metrics.headerRowTops[1] ?? Number.POSITIVE_INFINITY);
           expect(metrics.playerHeaderOverlap, `${viewport.width}px player/header content overlap`).toBe(false);
           expect(metrics.playerContainedByHeader, `${viewport.width}px player/header containment`).toBe(true);
+        } else if (mode === "wide") {
+          expect(metrics.headerRowTops, `${viewport.width}px wide header row bands`).toHaveLength(1);
         }
+      }
+
+      for (const width of [320, 321, 322, 323, 673, 740, 1025, 1200]) {
+        await page.setViewportSize({ height: 844, width });
+        const cardMetrics = await page.locator(".portfolio-alternate-card").evaluateAll((cards) => {
+          const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+          const intersects = (left: DOMRect, right: { bottom: number; left: number; right: number; top: number }) =>
+            left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+
+          return cards.map((card) => {
+            const toggle = card.querySelector<HTMLElement>(".portfolio-alternate-card-toggle");
+            const content = card.querySelector<HTMLElement>(".portfolio-alternate-card-content");
+            if (toggle === null || content === null) throw new Error("Alternate card footprint probes are unavailable.");
+            const toggleRect = toggle.getBoundingClientRect();
+            const readabilityGap = Number.parseFloat(
+              getComputedStyle(card).getPropertyValue("--portfolio-alternate-card-readability-gap"),
+            ) * rootFontSize;
+            const footprint = {
+              bottom: toggleRect.bottom + readabilityGap,
+              left: toggleRect.left - readabilityGap,
+              right: toggleRect.right + readabilityGap,
+              top: toggleRect.top - readabilityGap,
+            };
+            const contentTargets = [
+              ...card.querySelectorAll<HTMLElement>(
+                ".portfolio-alternate-card-content h2, .portfolio-alternate-card-description, .portfolio-alternate-card-footer, .portfolio-alternate-card-cta, .portfolio-alternate-card-status",
+              ),
+            ];
+            return {
+              controlSizes: [...card.querySelectorAll<HTMLElement>("button")].map((control) => {
+                const rect = control.getBoundingClientRect();
+                return { height: rect.height, width: rect.width };
+              }),
+              hasIntersection: contentTargets.some((target) => intersects(target.getBoundingClientRect(), footprint)),
+              noOverflow: card.scrollWidth <= card.clientWidth + 1 && content.scrollWidth <= content.clientWidth + 1,
+              toggleSize: { height: toggleRect.height, width: toggleRect.width },
+            };
+          });
+        });
+        expect(cardMetrics, `${width}px card count`).toHaveLength(13);
+        expect(cardMetrics.every(({ hasIntersection }) => !hasIntersection), `${width}px action footprint collisions`).toBe(true);
+        expect(cardMetrics.every(({ noOverflow }) => noOverflow), `${width}px card overflow`).toBe(true);
+        expect(cardMetrics.every(({ toggleSize }) => toggleSize.height >= 44 && toggleSize.width >= 44), `${width}px toggle target`).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${width}px document overflow`).toBe(true);
       }
 
       await page.setViewportSize({ height: 800, width: 1170 });
@@ -986,19 +1037,89 @@ test.describe("Immersive accessible portfolio", () => {
       await expect(player.getByRole("slider", { name: "Posición de la canción" })).toBeVisible();
       await player.getByRole("button", { name: "Mostrar letra" }).click();
 
-      const firstCue = page.locator(".bug-cesante-player-lyrics > button.bug-cesante-lyric").first();
-      await expect(firstCue).toBeVisible();
-      await expect(firstCue).toHaveAttribute("aria-label", /^Ir a \d+:\d{2}:/u);
-      await firstCue.press("Enter");
-      await expect(player.getByRole("slider", { name: "Posición de la canción" })).toHaveAttribute("data-seek-status", "pending");
+      const targetCue = page.locator(".bug-cesante-player-lyrics > button.bug-cesante-lyric").nth(1);
+      await expect(targetCue).toBeVisible();
+      await expect(targetCue).toHaveAttribute("aria-label", /^Ir a \d+:\d{2}:/u);
+      await targetCue.press("Enter");
+
+      const slider = player.getByRole("slider", { name: "Posición de la canción" });
+      await expect.poll(() => slider.getAttribute("data-seek-status")).toMatch(/^(pending|confirmed)$/u);
+      await expect.poll(() => targetCue.getAttribute("aria-current")).toBe("true");
+      const seekState = await page.evaluate(() => {
+        const seek = document.querySelector<HTMLInputElement>('.bug-cesante-player input[type="range"]');
+        const audio = document.querySelector<HTMLAudioElement>(".bug-cesante-audio");
+        if (seek === null || audio === null) throw new Error("Primary seek state probes are unavailable.");
+        return {
+          audioTime: audio.currentTime,
+          sliderTime: Number(seek.value),
+          status: seek.getAttribute("data-seek-status"),
+        };
+      });
+      expect(["pending", "confirmed"]).toContain(seekState.status);
+      expect(seekState.audioTime).toBeGreaterThan(0);
+      expect(seekState.sliderTime).toBeGreaterThan(0);
     },
   );
 
   test(
-    "keeps mobile alternate lyrics below the player and restores focus after closing",
+    "keeps mobile lyrics fullscreen in both presentations and restores focus after closing",
     { tag: ["@critical", "@e2e", "@portfolio", "@PORTFOLIO-ALTERNATE-LYRICS-E2E-001"] },
     async ({ page }) => {
       const portfolio = new PortfolioPage(page);
+      const readLyricsSurfaceGeometry = () => page.evaluate(() => {
+        const surface = document.querySelector<HTMLElement>(".bug-cesante-lyrics-surface");
+        const player = document.querySelector<HTMLElement>('.bug-cesante-player:not([data-presentation="alternate"])');
+        if (surface === null || player === null) {
+          throw new Error("Shared lyrics geometry probes are unavailable.");
+        }
+        const header = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-header");
+        const close = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-close");
+        const lyrics = surface.querySelector<HTMLElement>(".bug-cesante-player-lyrics");
+        if (header === null || close === null || lyrics === null) {
+          throw new Error("Shared lyrics geometry probes are unavailable.");
+        }
+        const surfaceRect = surface.getBoundingClientRect();
+        const playerRect = player.getBoundingClientRect();
+        return {
+          closeHeight: close.getBoundingClientRect().height,
+          headerHeight: header.getBoundingClientRect().height,
+          height: surfaceRect.height,
+          left: surfaceRect.left,
+          playerOccluded: document.elementFromPoint(playerRect.left + playerRect.width / 2, playerRect.top + playerRect.height / 2)?.closest(".bug-cesante-lyrics-surface") === surface,
+          scrollable: lyrics.scrollHeight > lyrics.clientHeight,
+          top: surfaceRect.top,
+          width: surfaceRect.width,
+        };
+      });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await portfolio.gotoShowcase();
+      await activateMusicThroughVoid(page);
+      const primaryPlayer = page.locator('.bug-cesante-player:not([data-presentation="alternate"])');
+      const primaryLyricsButton = primaryPlayer.getByRole("button", { name: "Mostrar letra" });
+      await primaryLyricsButton.click();
+      const primary390Geometry = await readLyricsSurfaceGeometry();
+      expect(primary390Geometry.playerOccluded).toBe(true);
+      expect(primary390Geometry.top).toBeCloseTo(0, 0);
+      expect(primary390Geometry.left).toBeCloseTo(0, 0);
+      expect(primary390Geometry.width).toBeCloseTo(390, 0);
+      expect(primary390Geometry.height).toBeCloseTo(844, 0);
+      await expect(page.getByRole("dialog", { name: "Letra de Bug Cesante" }).getByText("BUG CESANTE", { exact: true })).toHaveCount(1);
+      await expect(page.getByRole("dialog", { name: "Letra de Bug Cesante" }).locator(".bug-cesante-lyrics-header")).toBeVisible();
+      await expect(page.getByRole("dialog", { name: "Letra de Bug Cesante" }).locator(".bug-cesante-player-lyrics")).toBeVisible();
+      await page.getByRole("dialog", { name: "Letra de Bug Cesante" }).getByRole("button", { name: "Ocultar letra" }).click();
+      await expect(primaryLyricsButton).toBeFocused();
+
+      await page.setViewportSize({ width: 375, height: 667 });
+      await primaryLyricsButton.click();
+      const primary375Geometry = await readLyricsSurfaceGeometry();
+      expect(primary375Geometry.playerOccluded).toBe(true);
+      expect(primary375Geometry.top).toBeCloseTo(0, 0);
+      expect(primary375Geometry.left).toBeCloseTo(0, 0);
+      expect(primary375Geometry.width).toBeCloseTo(375, 0);
+      expect(primary375Geometry.height).toBeCloseTo(667, 0);
+      await page.getByRole("dialog", { name: "Letra de Bug Cesante" }).getByRole("button", { name: "Ocultar letra" }).click();
+      await expect(primaryLyricsButton).toBeFocused();
 
       await page.setViewportSize({ width: 390, height: 844 });
       await portfolio.gotoAlternatePortfolio();
@@ -1050,7 +1171,7 @@ test.describe("Immersive accessible portfolio", () => {
         await expect(page.locator(".bug-cesante-player-scope")).toHaveAttribute("inert", "");
         await expect(page.getByRole("button", { name: "Ocultar letra" })).toHaveCount(1);
       await expect(lyricsSurface.locator(".bug-cesante-lyric").first()).toBeVisible({ timeout: 10_000 });
-      await expect(lyricsSurface.getByText("BUG CESANTE", { exact: true })).toHaveCount(0);
+       await expect(lyricsSurface.getByText("BUG CESANTE", { exact: true })).toHaveCount(1);
       await expect(player).toBeVisible();
       await expect(player.getByRole("button", { name: "Reiniciar canción" })).toBeVisible();
       await expect(lyricsSurface.getByRole("button", { name: "Ocultar letra" })).toBeFocused();
@@ -1061,23 +1182,27 @@ test.describe("Immersive accessible portfolio", () => {
         if (surface === null || player === null) throw new Error("Mobile lyrics geometry probes are unavailable.");
         const surfaceRect = surface.getBoundingClientRect();
         const playerRect = player.getBoundingClientRect();
-        const lyrics = surface.querySelector<HTMLElement>(".bug-cesante-player-lyrics");
-        const header = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-header");
-        if (lyrics === null || header === null) throw new Error("Mobile lyrics probes are unavailable.");
+         const lyrics = surface.querySelector<HTMLElement>(".bug-cesante-player-lyrics");
+         const header = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-header");
+         const close = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-close");
+         if (lyrics === null || header === null || close === null) throw new Error("Mobile lyrics probes are unavailable.");
         const surfaceStyle = getComputedStyle(surface);
         const points: [number, number][] = [
-          [4, 0], [4, Math.max(1, playerRect.bottom - 1)], [4, header.getBoundingClientRect().top - 1],
+          [4, 0], [4, Math.max(1, playerRect.bottom - 1)], [4, Math.max(0, header.getBoundingClientRect().top)],
           [window.innerWidth - 4, 0], [window.innerWidth - 4, Math.max(1, playerRect.bottom - 1)],
         ];
         return {
           backdropSamples: points.map(([x, y]) => document.elementFromPoint(x, y)?.closest(".bug-cesante-lyrics-surface") === surface),
-          bottom: surfaceRect.bottom,
-          headerTop: header.getBoundingClientRect().top,
+           bottom: surfaceRect.bottom,
+           closeHeight: close.getBoundingClientRect().height,
+           headerTop: header.getBoundingClientRect().top,
+           headerHeight: header.getBoundingClientRect().height,
           height: surfaceRect.height,
           left: surfaceRect.left,
-          playerBottom: playerRect.bottom,
+           playerOccluded: document.elementFromPoint(playerRect.left + playerRect.width / 2, playerRect.top + playerRect.height / 2)?.closest(".bug-cesante-lyrics-surface") === surface,
+             playerBottom: playerRect.bottom,
           playerZIndex: Number.parseInt(getComputedStyle(player).zIndex, 10),
-          scrollable: lyrics.scrollHeight > lyrics.clientHeight,
+           scrollable: lyrics.scrollHeight > lyrics.clientHeight,
           surfaceBackgroundColor: surfaceStyle.backgroundColor,
           surfaceZIndex: Number.parseInt(surfaceStyle.zIndex, 10),
           top: surfaceRect.top,
@@ -1088,14 +1213,17 @@ test.describe("Immersive accessible portfolio", () => {
       });
       expect(modalGeometry.backdropSamples.every(Boolean)).toBe(true);
       expect(modalGeometry.surfaceBackgroundColor).toBe("rgb(5, 5, 5)");
-      expect(modalGeometry.surfaceZIndex).toBeLessThan(modalGeometry.playerZIndex);
-      expect(modalGeometry.top).toBeCloseTo(0, 0);
-      expect(modalGeometry.left).toBeGreaterThanOrEqual(0);
-      expect(modalGeometry.width).toBeLessThanOrEqual(modalGeometry.viewportWidth);
-      expect(modalGeometry.height).toBeGreaterThan(0);
-      expect(modalGeometry.bottom).toBeCloseTo(modalGeometry.viewportHeight, 0);
-      expect(modalGeometry.headerTop).toBeGreaterThanOrEqual(modalGeometry.playerBottom + 8);
-      expect(modalGeometry.scrollable).toBe(true);
+       expect(modalGeometry.surfaceZIndex).toBe(100);
+       expect(modalGeometry.surfaceZIndex).toBeGreaterThan(modalGeometry.playerZIndex);
+       expect(modalGeometry.playerOccluded).toBe(true);
+       expect(modalGeometry.top).toBeCloseTo(0, 0);
+       expect(modalGeometry.left).toBeCloseTo(0, 0);
+       expect(modalGeometry.width).toBeCloseTo(modalGeometry.viewportWidth, 0);
+       expect(modalGeometry.height).toBeCloseTo(modalGeometry.viewportHeight, 0);
+       expect(modalGeometry.bottom).toBeCloseTo(modalGeometry.viewportHeight, 0);
+       expect(modalGeometry.headerHeight).toBeCloseTo(primary390Geometry.headerHeight, 0);
+       expect(modalGeometry.closeHeight).toBeCloseTo(primary390Geometry.closeHeight, 0);
+       expect(modalGeometry.scrollable).toBe(true);
       await page.screenshot({ path: "test-results/alternate-lyrics-backdrop-390x844.png", fullPage: false, scale: "css" });
 
       await lyricsSurface.getByRole("button", { name: "Ocultar letra" }).click();
@@ -1157,32 +1285,42 @@ test.describe("Immersive accessible portfolio", () => {
           if (surface === null || player === null) throw new Error("Compact modal probes are unavailable.");
           const surfaceRect = surface.getBoundingClientRect();
           const playerRect = player.getBoundingClientRect();
-          const header = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-header");
-          const lyrics = surface.querySelector<HTMLElement>(".bug-cesante-player-lyrics");
-          if (header === null || lyrics === null) throw new Error("Compact modal content probes are unavailable.");
-          const points: [number, number][] = [[4, 0], [4, playerRect.bottom - 1], [window.innerWidth - 4, 0], [window.innerWidth - 4, playerRect.bottom - 1]];
+           const header = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-header");
+           const lyrics = surface.querySelector<HTMLElement>(".bug-cesante-player-lyrics");
+           const close = surface.querySelector<HTMLElement>(".bug-cesante-lyrics-close");
+           if (header === null || lyrics === null || close === null) throw new Error("Compact modal content probes are unavailable.");
+           const points: [number, number][] = [[4, 0], [4, playerRect.bottom - 1], [window.innerWidth - 4, 0], [window.innerWidth - 4, playerRect.bottom - 1]];
           return {
-            backdropSamples: points.map(([x, y]) => document.elementFromPoint(x, y)?.closest(".bug-cesante-lyrics-surface") === surface),
-            bottom: surfaceRect.bottom,
-            headerTop: header.getBoundingClientRect().top,
-            height: surfaceRect.height,
-            playerBottom: playerRect.bottom,
+             backdropSamples: points.map(([x, y]) => document.elementFromPoint(x, y)?.closest(".bug-cesante-lyrics-surface") === surface),
+             bottom: surfaceRect.bottom,
+             closeHeight: close.getBoundingClientRect().height,
+             headerTop: header.getBoundingClientRect().top,
+             headerHeight: header.getBoundingClientRect().height,
+             height: surfaceRect.height,
+             left: surfaceRect.left,
+             playerBottom: playerRect.bottom,
             playerZIndex: Number.parseInt(getComputedStyle(player).zIndex, 10),
             scrollable: lyrics.scrollHeight > lyrics.clientHeight,
             surfaceBackgroundColor: getComputedStyle(surface).backgroundColor,
             surfaceZIndex: Number.parseInt(getComputedStyle(surface).zIndex, 10),
             top: surfaceRect.top,
-            width: surfaceRect.width,
+             playerOccluded: document.elementFromPoint(playerRect.left + playerRect.width / 2, playerRect.top + playerRect.height / 2)?.closest(".bug-cesante-lyrics-surface") === surface,
+             width: surfaceRect.width,
           };
         });
         expect(compactModalGeometry.backdropSamples.every(Boolean)).toBe(true);
         expect(compactModalGeometry.surfaceBackgroundColor).toBe("rgb(5, 5, 5)");
-        expect(compactModalGeometry.surfaceZIndex).toBeLessThan(compactModalGeometry.playerZIndex);
-        expect(compactModalGeometry.top).toBeCloseTo(0, 0);
-        expect(compactModalGeometry.bottom).toBeCloseTo(667, 0);
-        expect(compactModalGeometry.width).toBeCloseTo(375, 0);
-        expect(compactModalGeometry.headerTop).toBeGreaterThanOrEqual(compactModalGeometry.playerBottom + 8);
-        expect(compactModalGeometry.scrollable).toBe(true);
+         expect(compactModalGeometry.surfaceZIndex).toBe(100);
+         expect(compactModalGeometry.surfaceZIndex).toBeGreaterThan(compactModalGeometry.playerZIndex);
+         expect(compactModalGeometry.playerOccluded).toBe(true);
+         expect(compactModalGeometry.top).toBeCloseTo(0, 0);
+         expect(compactModalGeometry.left).toBeCloseTo(0, 0);
+         expect(compactModalGeometry.height).toBeCloseTo(667, 0);
+         expect(compactModalGeometry.bottom).toBeCloseTo(667, 0);
+         expect(compactModalGeometry.width).toBeCloseTo(375, 0);
+         expect(compactModalGeometry.headerHeight).toBeCloseTo(primary375Geometry.headerHeight, 0);
+         expect(compactModalGeometry.closeHeight).toBeCloseTo(primary375Geometry.closeHeight, 0);
+         expect(compactModalGeometry.scrollable).toBe(true);
         await page.screenshot({ path: "test-results/alternate-lyrics-backdrop-375x667.png", fullPage: false, scale: "css" });
         await page.getByRole("button", { name: "Ocultar letra" }).click();
         await expect(page.getByRole("dialog", { name: "Letra de Bug Cesante" })).toHaveCount(0);

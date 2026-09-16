@@ -508,6 +508,7 @@ describe("BugCesantePlayerProvider", () => {
 
     const lyricsSurface = await screen.findByRole("dialog", { name: "Letra de Bug Cesante" });
     expect(lyricsSurface).toHaveAttribute("aria-modal", "true");
+    expect(within(lyricsSurface).getByText("BUG CESANTE", { exact: true })).toBeInTheDocument();
     await waitFor(() => expect(within(lyricsSurface).getByRole("button", { name: "Ocultar letra" })).toHaveFocus());
 
     await user.keyboard("{Escape}");
@@ -515,7 +516,7 @@ describe("BugCesantePlayerProvider", () => {
     expect(screen.getByRole("button", { name: "Mostrar letra" })).toHaveFocus();
   });
 
-  it("opens the alternate lyrics surface without restoring the primary title", async () => {
+  it("opens the alternate lyrics surface with the shared dialog contract", async () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({
       addEventListener: vi.fn(),
       addListener: vi.fn(),
@@ -542,7 +543,7 @@ describe("BugCesantePlayerProvider", () => {
 
     const lyricsSurface = await screen.findByRole("dialog", { name: "Letra de Bug Cesante" });
     expect(lyricsSurface).toHaveAttribute("data-presentation", PLAYER_PRESENTATION.ALTERNATE);
-    expect(within(lyricsSurface).queryByText("BUG CESANTE", { exact: true })).not.toBeInTheDocument();
+    expect(within(lyricsSurface).getByText("BUG CESANTE", { exact: true })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Ocultar letra" })).toHaveLength(1);
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Letra de Bug Cesante" })).not.toBeInTheDocument());

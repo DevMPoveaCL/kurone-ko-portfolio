@@ -399,10 +399,10 @@ function BugCesanteMobileSafeZone({ isActive, isMinimized, presentation }: { isA
     if (!isActive) return;
 
     const safeZone = safeZoneRef.current;
-    const player = document.querySelector<HTMLElement>(".bug-cesante-player");
-    if (safeZone === null || player === null) return;
-
     const updateSafeZone = () => {
+      const player = document.querySelector<HTMLElement>(".bug-cesante-player");
+      if (safeZone === null || player === null) return;
+
       safeZone.style.setProperty(
         "--mobile-control-safe-zone-size",
         `${Math.max(0, Math.ceil(player.getBoundingClientRect().bottom))}px`,
@@ -410,11 +410,18 @@ function BugCesanteMobileSafeZone({ isActive, isMinimized, presentation }: { isA
     };
 
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateSafeZone);
-    resizeObserver?.observe(player);
+    const observePlayer = () => {
+      const player = document.querySelector<HTMLElement>(".bug-cesante-player");
+      if (player === null) return;
+      resizeObserver?.observe(player);
+      updateSafeZone();
+    };
     window.addEventListener("resize", updateSafeZone);
-    updateSafeZone();
+    observePlayer();
+    const frame = window.requestAnimationFrame(observePlayer);
 
     return () => {
+      window.cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", updateSafeZone);
     };
@@ -1250,7 +1257,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
        {showLyricsSurface ? <section aria-label="Letra de Bug Cesante" aria-modal="true" className="bug-cesante-lyrics-surface" data-presentation={presentation} id="bug-cesante-lyrics-surface" role="dialog">
          <header className="bug-cesante-lyrics-header">
            <div>
-             {presentation === PLAYER_PRESENTATION.PRIMARY ? <p className="bug-cesante-lyrics-kicker">BUG CESANTE</p> : null}
+             <p className="bug-cesante-lyrics-kicker">BUG CESANTE</p>
             <h2>Letra</h2>
           </div>
           <button aria-label="Ocultar letra" className="bug-cesante-lyrics-close" onClick={() => setLyricsExpanded(false)} ref={lyricsCloseRef} type="button">Ocultar letra</button>

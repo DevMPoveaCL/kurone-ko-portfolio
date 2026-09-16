@@ -9611,6 +9611,14 @@ h2 {
 }
 
 .portfolio-alternate-card {
+  --portfolio-alternate-card-action-size: 2.75rem;
+  --portfolio-alternate-card-edge-inset: 0.55rem;
+  --portfolio-alternate-card-readability-gap: 0.5rem;
+  --portfolio-alternate-card-action-lane: calc(
+    var(--portfolio-alternate-card-action-size) +
+      var(--portfolio-alternate-card-edge-inset) +
+      var(--portfolio-alternate-card-readability-gap)
+  );
   position: relative;
   min-block-size: 0;
   min-inline-size: 0;
@@ -9633,6 +9641,7 @@ h2 {
   min-block-size: 0;
   flex-direction: column;
   padding: clamp(0.6rem, 1.1vw, 1rem);
+  padding-inline-end: var(--portfolio-alternate-card-action-lane);
 }
 
 .portfolio-alternate-card-index,
@@ -9673,7 +9682,7 @@ h2 {
   min-block-size: 2rem;
   margin-block-start: auto;
   padding-block-start: 0.35rem;
-  padding-inline-end: 2.65rem;
+  padding-inline-end: 0;
 }
 
 .portfolio-alternate-card-cta,
@@ -9704,11 +9713,13 @@ h2 {
 .portfolio-alternate-card-toggle {
   position: absolute;
   z-index: 3;
-  inset-block-end: 0.55rem;
-  inset-inline-end: 0.55rem;
+  inset-block-end: var(--portfolio-alternate-card-edge-inset);
+  inset-inline-end: var(--portfolio-alternate-card-edge-inset);
   display: grid;
-  min-block-size: 2.75rem;
-  min-inline-size: 2.75rem;
+  inline-size: var(--portfolio-alternate-card-action-size);
+  block-size: var(--portfolio-alternate-card-action-size);
+  min-block-size: var(--portfolio-alternate-card-action-size);
+  min-inline-size: var(--portfolio-alternate-card-action-size);
   place-items: center;
   border: 1px solid var(--portfolio-line-strong);
   border-radius: 50%;
@@ -9966,17 +9977,6 @@ h2 {
     );
   }
 
-  .bug-cesante-lyrics-surface[data-presentation="alternate"] {
-    /* The surface occludes the scrolled page; its grid content starts below the player. */
-    z-index: 30;
-    inset: 0;
-    block-size: 100dvh;
-    padding-block-start: calc(
-      max(1rem, env(safe-area-inset-top)) +
-      var(--portfolio-alternate-player-reserved-top)
-    );
-  }
-
   .bug-cesante-player[data-presentation="alternate"] {
     inset-block-start: max(1rem, env(safe-area-inset-top));
     inline-size: min(24rem, calc(100vw - 2rem));
@@ -10022,11 +10022,10 @@ h2 {
 
 @media (min-width: 48.0625rem) {
   .portfolio-alternate-header {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "identity"
-      "player"
-      "social";
+      "player player"
+      "identity social";
     row-gap: 0.7rem;
   }
 
@@ -10035,6 +10034,8 @@ h2 {
     inline-size: fit-content;
     max-inline-size: 100%;
     justify-self: start;
+    justify-items: start;
+    text-align: start;
   }
 
   .portfolio-alternate-role {
@@ -10074,6 +10075,11 @@ h2 {
 
   .portfolio-alternate-player-outlet {
     inline-size: 24rem;
+  }
+
+  .portfolio-alternate-identity {
+    justify-items: center;
+    text-align: center;
   }
 }
 
