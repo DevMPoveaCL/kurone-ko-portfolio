@@ -9397,9 +9397,10 @@ h2 {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: clamp(0.55rem, 1vw, 0.9rem);
-  block-size: 100svh;
+  block-size: auto;
   min-block-size: 100svh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
   padding: clamp(0.8rem, 1.5vw, 1.5rem) clamp(0.8rem, 2.6vw, 3rem);
   padding-block-start: max(1rem, env(safe-area-inset-top));
   background:
@@ -9574,9 +9575,9 @@ h2 {
 
 .portfolio-alternate-main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   gap: 0.55rem;
-  min-block-size: 0;
+  min-block-size: auto;
 }
 
 .portfolio-alternate-showcase-intro {
@@ -9595,9 +9596,10 @@ h2 {
 .portfolio-alternate-grid {
   display: grid;
   grid-template-columns: repeat(20, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, auto);
   gap: clamp(0.45rem, 0.9vw, 0.8rem);
-  min-block-size: 0;
+  min-block-size: auto;
+  align-items: stretch;
 }
 
 .portfolio-alternate-card[data-destination="linked"] {
@@ -9620,9 +9622,11 @@ h2 {
       var(--portfolio-alternate-card-readability-gap)
   );
   position: relative;
-  min-block-size: 0;
+  display: flex;
+  min-block-size: max-content;
   min-inline-size: 0;
-  overflow: hidden;
+  flex-direction: column;
+  overflow: visible;
   border: 1px solid var(--portfolio-line);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.08), transparent 38%),
@@ -9637,7 +9641,8 @@ h2 {
 
 .portfolio-alternate-card-content {
   display: flex;
-  block-size: 100%;
+  flex: 1 1 auto;
+  block-size: auto;
   min-block-size: 0;
   flex-direction: column;
   padding: clamp(0.6rem, 1.1vw, 1rem);

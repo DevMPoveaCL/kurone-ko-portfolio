@@ -693,7 +693,37 @@ test.describe("Immersive accessible portfolio", () => {
         viewportWidth: window.innerWidth,
       }));
       expect(desktopGeometry.documentWidth).toBeLessThanOrEqual(desktopGeometry.viewportWidth);
-      expect(desktopGeometry.documentHeight).toBeLessThanOrEqual(desktopGeometry.viewportHeight);
+      expect(desktopGeometry.documentHeight).toBeGreaterThan(desktopGeometry.viewportHeight);
+      const desktopFlow = await page.evaluate(() => {
+        const route = document.querySelector<HTMLElement>(".portfolio-alternate");
+        const scrollingElement = document.scrollingElement;
+        if (route === null || scrollingElement === null) throw new Error("Alternate desktop flow probes are unavailable.");
+        const routeRect = route.getBoundingClientRect();
+        const within = (inner: DOMRect, outer: DOMRect) =>
+          inner.left >= outer.left - 1 && inner.right <= outer.right + 1 && inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+        const cardsWithinFlow = [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-card")].every((card) => {
+          const content = card.querySelector<HTMLElement>(".portfolio-alternate-card-content");
+          const footer = card.querySelector<HTMLElement>(".portfolio-alternate-card-footer");
+          if (content === null || footer === null) return false;
+          const cardRect = card.getBoundingClientRect();
+          return within(cardRect, routeRect) && within(content.getBoundingClientRect(), cardRect) && within(footer.getBoundingClientRect(), cardRect);
+        });
+        return {
+          bodyCanScroll: document.body.scrollHeight > document.body.clientHeight,
+          bodyOverflowX: getComputedStyle(document.body).overflowX,
+          bodyOverflowY: getComputedStyle(document.body).overflowY,
+          cardsWithinFlow,
+          pageCanScroll: scrollingElement.scrollHeight > scrollingElement.clientHeight,
+          routeOverflowX: getComputedStyle(route).overflowX,
+          routeOverflowY: getComputedStyle(route).overflowY,
+        };
+      });
+      expect(desktopFlow.bodyCanScroll || desktopFlow.pageCanScroll).toBe(true);
+      expect(desktopFlow.cardsWithinFlow).toBe(true);
+      expect(desktopFlow.bodyOverflowX).not.toBe("hidden");
+      expect(desktopFlow.bodyOverflowY).not.toBe("hidden");
+      expect(desktopFlow.routeOverflowX).toBe("hidden");
+      expect(desktopFlow.routeOverflowY).not.toBe("hidden");
       expect(await page.locator(".portfolio-alternate").evaluate((element) => getComputedStyle(element).userSelect)).toBe("none");
       expect(await page.locator(".portfolio-alternate-ticker-track").evaluate((element) => getComputedStyle(element).animationDuration)).toBe("75s");
 
@@ -740,7 +770,8 @@ test.describe("Immersive accessible portfolio", () => {
         viewportWidth: window.innerWidth,
       }));
       expect(largeDesktopGeometry.documentWidth).toBeLessThanOrEqual(largeDesktopGeometry.viewportWidth);
-      expect(largeDesktopGeometry.documentHeight).toBeLessThanOrEqual(largeDesktopGeometry.viewportHeight);
+      expect(largeDesktopGeometry.documentHeight).toBeGreaterThan(largeDesktopGeometry.viewportHeight);
+      expect(await page.evaluate(() => document.scrollingElement !== null && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight)).toBe(true);
 
       await expect(page.getByRole("button", { name: "Ver tecnologías de Kurone-ko Timer" })).toBeVisible();
       await page.getByRole("button", { name: "Ver tecnologías de Kurone-ko Timer" }).click();
@@ -947,17 +978,40 @@ test.describe("Immersive accessible portfolio", () => {
         }
       }
 
-      for (const width of [320, 321, 322, 323, 673, 740, 1025, 1200]) {
-        await page.setViewportSize({ height: 844, width });
+      for (const viewport of [
+        { height: 667, width: 320 },
+        { height: 844, width: 375 },
+        { height: 844, width: 673 },
+        { height: 800, width: 700 },
+        { height: 844, width: 740 },
+        { height: 900, width: 800 },
+        { height: 667, width: 1025 },
+        { height: 800, width: 1025 },
+        { height: 800, width: 1100 },
+        { height: 800, width: 1200 },
+        { height: 800, width: 1280 },
+        { height: 900, width: 1440 },
+        { height: 1080, width: 1440 },
+      ]) {
+        await page.setViewportSize(viewport);
         const cardMetrics = await page.locator(".portfolio-alternate-card").evaluateAll((cards) => {
           const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
           const intersects = (left: DOMRect, right: { bottom: number; left: number; right: number; top: number }) =>
             left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+          const box = (element: Element) => {
+            const rect = element.getBoundingClientRect();
+            return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top };
+          };
+          const isVisible = (element: Element) => {
+            const style = getComputedStyle(element);
+            return style.display !== "none" && style.visibility !== "hidden" && element.getBoundingClientRect().height > 0;
+          };
 
-          return cards.map((card) => {
+          return cards.filter((card) => isVisible(card)).map((card) => {
             const toggle = card.querySelector<HTMLElement>(".portfolio-alternate-card-toggle");
             const content = card.querySelector<HTMLElement>(".portfolio-alternate-card-content");
             if (toggle === null || content === null) throw new Error("Alternate card footprint probes are unavailable.");
+            const cardBox = box(card);
             const toggleRect = toggle.getBoundingClientRect();
             const readabilityGap = Number.parseFloat(
               getComputedStyle(card).getPropertyValue("--portfolio-alternate-card-readability-gap"),
@@ -972,23 +1026,34 @@ test.describe("Immersive accessible portfolio", () => {
               ...card.querySelectorAll<HTMLElement>(
                 ".portfolio-alternate-card-content h2, .portfolio-alternate-card-description, .portfolio-alternate-card-footer, .portfolio-alternate-card-cta, .portfolio-alternate-card-status",
               ),
-            ];
+            ].filter(isVisible);
+            const contentBoxes = [content, ...contentTargets].map(box);
             return {
+              allContentWithinCard: contentBoxes.every((target) =>
+                target.left >= cardBox.left - 1 &&
+                target.right <= cardBox.right + 1 &&
+                target.top >= cardBox.top - 1 &&
+                target.bottom <= cardBox.bottom + 1,
+              ),
               controlSizes: [...card.querySelectorAll<HTMLElement>("button")].map((control) => {
                 const rect = control.getBoundingClientRect();
                 return { height: rect.height, width: rect.width };
               }),
+              cardBox,
+              contentBox: box(content),
+              footerBox: box(card.querySelector<HTMLElement>(".portfolio-alternate-card-footer")!),
               hasIntersection: contentTargets.some((target) => intersects(target.getBoundingClientRect(), footprint)),
               noOverflow: card.scrollWidth <= card.clientWidth + 1 && content.scrollWidth <= content.clientWidth + 1,
               toggleSize: { height: toggleRect.height, width: toggleRect.width },
             };
           });
         });
-        expect(cardMetrics, `${width}px card count`).toHaveLength(13);
-        expect(cardMetrics.every(({ hasIntersection }) => !hasIntersection), `${width}px action footprint collisions`).toBe(true);
-        expect(cardMetrics.every(({ noOverflow }) => noOverflow), `${width}px card overflow`).toBe(true);
-        expect(cardMetrics.every(({ toggleSize }) => toggleSize.height >= 44 && toggleSize.width >= 44), `${width}px toggle target`).toBe(true);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${width}px document overflow`).toBe(true);
+        expect(cardMetrics, `${viewport.width}x${viewport.height}px card count`).toHaveLength(13);
+        expect(cardMetrics.every(({ allContentWithinCard }) => allContentWithinCard), `${viewport.width}x${viewport.height}px content bounds`).toBe(true);
+        expect(cardMetrics.every(({ hasIntersection }) => !hasIntersection), `${viewport.width}x${viewport.height}px action footprint collisions`).toBe(true);
+        expect(cardMetrics.every(({ noOverflow }) => noOverflow), `${viewport.width}x${viewport.height}px card overflow`).toBe(true);
+        expect(cardMetrics.every(({ toggleSize }) => toggleSize.height >= 44 && toggleSize.width >= 44), `${viewport.width}x${viewport.height}px toggle target`).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${viewport.width}x${viewport.height}px document overflow`).toBe(true);
       }
 
       await page.setViewportSize({ height: 800, width: 1170 });
