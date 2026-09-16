@@ -1,6 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../shared/media/image-readiness", () => ({
+  prepareImageReadiness: vi.fn((src: string) =>
+    Promise.resolve({ phase: "degraded" as const, src })),
+}));
+
 import { MainHall } from "./MainHall";
 import { PROJECT_UNLOCK_CHALLENGE_ID, PROJECT_UNLOCK_SUCCESS } from "./hidden-project-unlock";
 import {
