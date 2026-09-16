@@ -14,12 +14,12 @@ import { PROJECT_PREVIEW_FIT, PROJECT_PREVIEW_SOURCE } from "./vault-types";
 describe("hidden project unlock", () => {
   it("normalizes accepted answers with exact equality", () => {
     expect(normalizeUnlockAnswer("  TÍO   Ben ")).toBe("tioben");
-    for (const answer of ["el tío ben", "el tio ben", "eltioben", "tío ben", "tio ben", "tioben", "narrador", " E l\tTÍO\nB E N "]) {
+    for (const answer of ["ben", " Ben ", "BEN", "el tío ben", "el tio ben", "eltioben", "tío ben", "tio ben", "tioben", "narrador", " E l\tTÍO\nB E N "]) {
       expect(isAcceptedUnlockAnswer(PROJECT_UNLOCK_CHALLENGES[0]!, answer)).toBe(true);
     }
-    expect(isAcceptedUnlockAnswer(PROJECT_UNLOCK_CHALLENGES[0]!, "narrador extra")).toBe(false);
-    expect(isAcceptedUnlockAnswer(PROJECT_UNLOCK_CHALLENGES[0]!, "tioben extra")).toBe(false);
-    expect(isAcceptedUnlockAnswer(PROJECT_UNLOCK_CHALLENGES[0]!, "narradorio")).toBe(false);
+    for (const answer of ["narradorffffffff", "benny", "arbitrary text", "narrador extra", "tioben extra", "narradorio"]) {
+      expect(isAcceptedUnlockAnswer(PROJECT_UNLOCK_CHALLENGES[0]!, answer)).toBe(false);
+    }
   });
 
   it("uses contain-fit Joker previews before and after challenge unlock", () => {

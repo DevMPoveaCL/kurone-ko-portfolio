@@ -3,10 +3,10 @@ import type { ProjectEntry, ProjectPreview } from "./vault-types";
 export const PROJECT_UNLOCK_CHALLENGE_ID = "hidden-projects-riddle" as const;
 
 const PROJECT_UNLOCK_TITLE = "ACERTIJO" as const;
-const PROJECT_UNLOCK_ANSWERS = ["eltioben", "tioben", "narrador"] as const;
+const PROJECT_UNLOCK_ANSWERS = ["ben", "eltioben", "tioben", "narrador"] as const;
 
 export const PROJECT_UNLOCK_CONSOLE_CLUE =
-  "¡Hola! ¿Revisando la consola? O.O... ¡Pillín! xD\nGracias por revisar mi portfolio; aprecio mucho que se tome el tiempo de verlo.\nSi quiere acceder a los proyectos “Bloqueados”, escriba “el tío ben”, “tío ben” o “narrador” de la forma que desee: no importan las mayúsculas, las tildes ni los espacios.\nDebe tipear la respuesta en la barra de búsqueda de FILTROS. ¡Gracias!";
+  "¡Hola! ¿Revisando la consola? O.O... ¡Pillín! xD\nGracias por revisar mi portfolio; aprecio mucho que se tome el tiempo de verlo.\nSi quiere acceder a los proyectos “el tío ben”, “ben” o “narrador” de la forma que desee: no importan las mayúsculas, las tildes ni los espacios.\nDebe tipear la respuesta en la barra de búsqueda de FILTROS. ¡Gracias!";
 
 export interface ProjectUnlockChallenge {
   acceptedAnswers: readonly string[];

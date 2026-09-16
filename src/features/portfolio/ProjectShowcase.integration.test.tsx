@@ -73,7 +73,7 @@ describe("MainHall showcase integration", () => {
     expect(lockedPosCard).toHaveAccessibleDescription(/Proyecto oculto y bloqueado/i);
     const filterDialog = screen.getByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ }) as HTMLDialogElement;
     const searchbox = screen.getByRole("searchbox", { name: "Buscar tecnología" });
-    await user.type(searchbox, "  NaRRaDoR");
+    await user.type(searchbox, "BeN");
 
     await waitFor(() => expect(filterDialog.open).toBe(false));
     expect(searchbox).toHaveValue("");

@@ -9576,6 +9576,7 @@ h2 {
 .portfolio-alternate-main {
   display: grid;
   grid-template-rows: auto auto;
+  align-content: start;
   gap: 0.55rem;
   min-block-size: auto;
 }
@@ -9976,6 +9977,7 @@ h2 {
   }
 
   .portfolio-alternate {
+    isolation: auto;
     padding-block-start: calc(
       max(1rem, env(safe-area-inset-top)) +
       var(--portfolio-alternate-player-reserved-top)
@@ -10015,12 +10017,6 @@ h2 {
   .vault-alternate-portfolio-link {
     display: inline-grid;
     place-items: center;
-  }
-}
-
-@media (max-width: 48rem) {
-  .portfolio-alternate {
-    isolation: auto;
   }
 }
 

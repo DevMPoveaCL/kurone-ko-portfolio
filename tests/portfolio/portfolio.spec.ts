@@ -22,7 +22,7 @@ declare global {
 const INTRO_FRAME_RECOVERY_TIMEOUT_MS = 10_000;
 const ROLLBACK_AFTER_ARTIFACTS = "artifacts/regression-rollback-after";
 const PROJECT_UNLOCK_FRIENDLY_CONSOLE_MESSAGE =
-  "¡Hola! ¿Revisando la consola? O.O... ¡Pillín! xD\nGracias por revisar mi portfolio; aprecio mucho que se tome el tiempo de verlo.\nSi quiere acceder a los proyectos “Bloqueados”, escriba “el tío ben”, “tío ben” o “narrador” de la forma que desee: no importan las mayúsculas, las tildes ni los espacios.\nDebe tipear la respuesta en la barra de búsqueda de FILTROS. ¡Gracias!";
+  "¡Hola! ¿Revisando la consola? O.O... ¡Pillín! xD\nGracias por revisar mi portfolio; aprecio mucho que se tome el tiempo de verlo.\nSi quiere acceder a los proyectos “el tío ben”, “ben” o “narrador” de la forma que desee: no importan las mayúsculas, las tildes ni los espacios.\nDebe tipear la respuesta en la barra de búsqueda de FILTROS. ¡Gracias!";
 
 const PROJECT_UNLOCK_MODAL_CASES = [
   {
@@ -867,6 +867,103 @@ test.describe("Immersive accessible portfolio", () => {
         body: await page.screenshot({ fullPage: true }),
         contentType: "image/png",
       });
+    },
+  );
+
+  test(
+    "keeps alternate stacking, top packing, and all cards stable across activation boundaries",
+    { tag: ["@critical", "@e2e", "@portfolio", "@PORTFOLIO-ALTERNATE-REGRESSION-E2E-003"] },
+    async ({ browser }) => {
+      test.setTimeout(120_000);
+      const fineViewports = [
+        { height: 500, width: 320, safeZoneActive: true },
+        { height: 500, width: 768, safeZoneActive: true },
+        { height: 800, width: 769, safeZoneActive: false },
+        { height: 1280, width: 1280, safeZoneActive: false },
+        { height: 1600, width: 1600, safeZoneActive: false },
+      ];
+      const coarseViewports = [
+        { height: 500, width: 769, safeZoneActive: true },
+        { height: 800, width: 853, safeZoneActive: true },
+        { height: 1280, width: 912, safeZoneActive: true },
+        { height: 1376, width: 960, safeZoneActive: true },
+        { height: 1440, width: 1032, safeZoneActive: true },
+        { height: 1600, width: 1280, safeZoneActive: true },
+      ];
+
+      const readLayoutMetrics = (page: import("@playwright/test").Page) => page.evaluate(() => {
+        const route = document.querySelector<HTMLElement>(".portfolio-alternate");
+        const safeZone = document.querySelector<HTMLElement>('.mobile-control-safe-zone[data-presentation="alternate"]');
+        const player = document.querySelector<HTMLElement>('.bug-cesante-player[data-presentation="alternate"]');
+        const intro = document.querySelector<HTMLElement>(".portfolio-alternate-showcase-intro");
+        const cards = [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-card")];
+        if (route === null || safeZone === null || player === null || intro === null || cards.length !== 13) {
+          throw new Error("Alternate regression probes are unavailable.");
+        }
+
+        const playerRect = player.getBoundingClientRect();
+        const cardRects = cards.map((card) => {
+          const rect = card.getBoundingClientRect();
+          return { bottom: rect.bottom, height: rect.height, left: rect.left, right: rect.right, top: rect.top, width: rect.width };
+        });
+        const firstCard = cardRects[0];
+        if (firstCard === undefined) throw new Error("First alternate card is unavailable.");
+        const intersects = (left: typeof firstCard, right: typeof firstCard) =>
+          left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+        return {
+          cardCount: cards.length,
+          cardsPositive: cardRects.every(({ height, width }) => height > 0 && width > 0),
+          cardsReachable: cards.every((card) => {
+            const style = getComputedStyle(card);
+            return style.display !== "none" && style.visibility !== "hidden" && !card.hasAttribute("aria-hidden");
+          }),
+          cardsWithinViewport: cardRects.every(({ left, right }) => left >= -1 && right <= innerWidth + 1),
+          firstCardGap: firstCard.top - intro.getBoundingClientRect().bottom,
+          isolation: getComputedStyle(route).isolation,
+          nonOverlapping: cardRects.every((card, index) => cardRects.slice(index + 1).every((other) => !intersects(card, other))),
+          playerPainted: playerRect.width > 0 && playerRect.height > 0 && getComputedStyle(player).visibility === "visible" && Number.parseFloat(getComputedStyle(player).opacity) > 0 && document.elementFromPoint(playerRect.left + playerRect.width / 2, playerRect.top + playerRect.height / 2)?.closest(".bug-cesante-player") === player,
+          playerZIndex: getComputedStyle(player).zIndex,
+          safeZoneDisplay: getComputedStyle(safeZone).display,
+          safeZoneZIndex: getComputedStyle(safeZone).zIndex,
+          documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        };
+      });
+
+      const probe = async (page: import("@playwright/test").Page, viewports: readonly { height: number; safeZoneActive: boolean; width: number }[]) => {
+        const portfolio = new PortfolioPage(page);
+        await portfolio.gotoAlternatePortfolio();
+        for (const viewport of viewports) {
+          await page.setViewportSize({ height: viewport.height, width: viewport.width });
+          const metrics = await readLayoutMetrics(page);
+          expect(metrics.cardCount, `${viewport.width}x${viewport.height}px card count`).toBe(13);
+          expect(metrics.cardsPositive, `${viewport.width}x${viewport.height}px positive card sizes`).toBe(true);
+          expect(metrics.cardsReachable, `${viewport.width}x${viewport.height}px reachable cards`).toBe(true);
+          expect(metrics.cardsWithinViewport, `${viewport.width}x${viewport.height}px card bounds`).toBe(true);
+          expect(metrics.nonOverlapping, `${viewport.width}x${viewport.height}px card overlap`).toBe(true);
+          expect(metrics.documentOverflow, `${viewport.width}x${viewport.height}px horizontal overflow`).toBe(false);
+          expect(metrics.firstCardGap, `${viewport.width}x${viewport.height}px intrinsic heading gap`).toBeGreaterThanOrEqual(0);
+          expect(metrics.firstCardGap, `${viewport.width}x${viewport.height}px intrinsic heading gap`).toBeLessThanOrEqual(24);
+          expect(metrics.playerPainted, `${viewport.width}x${viewport.height}px player paint`).toBe(true);
+          if (viewport.safeZoneActive) {
+            expect(metrics.safeZoneDisplay, `${viewport.width}x${viewport.height}px safe-zone display`).toBe("block");
+            expect(metrics.isolation, `${viewport.width}x${viewport.height}px alternate stacking owner`).toBe("auto");
+            expect(metrics.safeZoneZIndex, `${viewport.width}x${viewport.height}px safe-zone layer`).toBe("30");
+            expect(metrics.playerZIndex, `${viewport.width}x${viewport.height}px player layer`).toBe("40");
+          } else {
+            expect(metrics.safeZoneDisplay, `${viewport.width}x${viewport.height}px safe-zone display`).toBe("none");
+          }
+        }
+      };
+
+      const fineContext = await browser.newContext({ hasTouch: false, viewport: { height: 500, width: 320 } });
+      const coarseContext = await browser.newContext({ hasTouch: true, viewport: { height: 500, width: 769 } });
+      try {
+        await probe(await fineContext.newPage(), fineViewports);
+        await probe(await coarseContext.newPage(), coarseViewports);
+      } finally {
+        await fineContext.close();
+        await coarseContext.close();
+      }
     },
   );
 
@@ -3427,6 +3524,76 @@ test.describe("Immersive accessible portfolio", () => {
        await expect(page.getByRole("status").filter({ hasText: "Proyecto activo:" })).toContainText("Kurone-ko Timer");
        await page.keyboard.press("ArrowLeft");
        await expect(page.getByRole("status").filter({ hasText: "Proyecto activo:" })).toContainText("Software Engineering Playbook");
+     },
+   );
+
+  test(
+    "keeps wrong-correct and repeated alias unlocks interactive for keyboard and pointer project access",
+    { tag: ["@critical", "@e2e", "@a11y", "@PROJECT-UNLOCK-REGRESSION-E2E-005"] },
+    async ({ page }) => {
+      const portfolio = new PortfolioPage(page);
+      await portfolio.gotoShowcase();
+
+      const filterButton = page.getByRole("button", { name: /^Filtros/ });
+      await filterButton.click();
+      const filterDialog = page.getByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ });
+      const searchbox = filterDialog.getByRole("searchbox", { name: "Buscar tecnología" });
+      for (const nearMiss of ["narradorffffffff", "benny", "arbitrary text"]) {
+        await searchbox.fill(nearMiss);
+        await expect(page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" })).toHaveCount(0);
+        await searchbox.fill("");
+      }
+      await searchbox.fill(" Ben ");
+
+      const success = page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" });
+      await expect(success).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(success).toHaveCount(0);
+      await expect(page.locator(".project-carousel[data-carousel-focus-target='true']")).toBeFocused();
+
+      await filterButton.click();
+      const repeatedFilterDialog = page.getByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ });
+      await repeatedFilterDialog.getByRole("searchbox", { name: "Buscar tecnología" }).pressSequentially("el tío ben", { delay: 2 });
+      await expect(page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(repeatedFilterDialog).toHaveCount(0);
+
+      const lifecycleState = await page.evaluate(() => {
+        const surface = document.querySelector<HTMLElement>(".project-showcase-interaction-surface");
+        return {
+          bodyOverflow: getComputedStyle(document.body).overflow,
+          bodyOverflowX: getComputedStyle(document.body).overflowX,
+          bodyOverflowY: getComputedStyle(document.body).overflowY,
+          dialogCount: document.querySelectorAll("dialog[open]").length,
+          surfaceAriaHidden: surface?.getAttribute("aria-hidden") ?? null,
+          surfaceInert: surface?.hasAttribute("inert") ?? false,
+        };
+      });
+      expect(lifecycleState.bodyOverflow).toBe("auto");
+      expect(lifecycleState.bodyOverflowX).not.toBe("hidden");
+      expect(lifecycleState.bodyOverflowY).not.toBe("hidden");
+      expect(lifecycleState.dialogCount).toBe(0);
+      expect(lifecycleState.surfaceAriaHidden).toBeNull();
+      expect(lifecycleState.surfaceInert).toBe(false);
+
+      const project = page.getByRole("article", { name: "Kurone-ko POS" });
+      for (let index = 0; index < 13 && !(await project.isVisible().catch(() => false)); index += 1) {
+        await page.getByRole("button", { name: "Proyecto siguiente" }).click();
+      }
+      await expect(project).toBeVisible();
+      await project.getByRole("button", { name: /Ver stack de/ }).click();
+      const stackDialog = page.getByRole("dialog", { name: "VENDER SIN PERDER EL RASTRO" });
+      await expect(stackDialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(stackDialog).toHaveCount(0);
+
+      await project.focus();
+      await page.keyboard.press("i");
+      const infoDialog = page.getByRole("dialog", { name: "KURONE-KO POS" });
+      await expect(infoDialog).toBeVisible();
+      await infoDialog.getByRole("button", { name: /Cerrar información de/ }).click();
+      await expect(infoDialog).toHaveCount(0);
+      await expect(page.locator(".project-carousel[data-carousel-focus-target='true']")).toBeFocused();
     },
   );
 

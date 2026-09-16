@@ -134,7 +134,24 @@ export function ProjectShowcase({
   const unlockSuccessDismissRef = useRef<HTMLButtonElement>(null);
   const unlockSuccessCloseRef = useRef<HTMLButtonElement>(null);
   const unlockSuccessFocusGuardRef = useRef(false);
+  const unlockSuccessWasOpenRef = useRef(false);
   const isUnlockSuccessOpen = unlockDialogPhase === UNLOCK_DIALOG_PHASE.OPEN || unlockDialogPhase === UNLOCK_DIALOG_PHASE.DEGRADED_READY;
+
+  function restoreCarouselFocus() {
+    (carouselFocusTargetRef.current ?? getCarouselFocusTarget())?.focus({ preventScroll: true });
+  }
+
+  useLayoutEffect(() => {
+    if (isUnlockSuccessOpen) {
+      unlockSuccessWasOpenRef.current = true;
+      return;
+    }
+
+    if (!unlockSuccessWasOpenRef.current) return;
+    unlockSuccessWasOpenRef.current = false;
+    restoreCarouselFocus();
+  }, [isUnlockSuccessOpen]);
+
   useEffect(() => {
     if (typeof window === "undefined" || hasLoggedProjectShowcaseStart) return;
 
@@ -355,10 +372,6 @@ export function ProjectShowcase({
     window.history.pushState({ showcaseFilters: true }, "", getShowcaseUrl([], null));
   }
 
-  function restoreCarouselFocus() {
-    (carouselFocusTargetRef.current ?? getCarouselFocusTarget())?.focus({ preventScroll: true });
-  }
-
   function closeUnlockSuccess() {
     unlockSuccessFocusGuardRef.current = false;
     const dialog = unlockSuccessDialogRef.current;
@@ -368,7 +381,6 @@ export function ProjectShowcase({
       return;
     }
     transitionUnlockDialogPhase(UNLOCK_DIALOG_PHASE.IDLE);
-    window.requestAnimationFrame(restoreCarouselFocus);
   }
 
   function unlockChallenge(challengeId: string) {
@@ -445,7 +457,6 @@ export function ProjectShowcase({
           onClose={() => {
             unlockSuccessFocusGuardRef.current = false;
             transitionUnlockDialogPhase(UNLOCK_DIALOG_PHASE.IDLE);
-            window.requestAnimationFrame(restoreCarouselFocus);
           }}
           onKeyDown={(event) => {
             if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
