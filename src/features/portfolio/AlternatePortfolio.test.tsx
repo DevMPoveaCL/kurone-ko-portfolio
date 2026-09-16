@@ -74,6 +74,29 @@ describe("AlternatePortfolio", () => {
     );
   });
 
+  it("renders one alternate player landmark through the header outlet", async () => {
+    const { container } = render(<AlternatePortfolio />);
+
+    const header = container.querySelector(".portfolio-alternate-header");
+    if (header === null) throw new Error("Alternate portfolio header is unavailable.");
+    const identity = header.querySelector(".portfolio-alternate-identity");
+    const outlet = header.querySelector(".portfolio-alternate-player-outlet");
+    const social = header.querySelector(".portfolio-alternate-social");
+    const player = await screen.findByRole("complementary", {
+      name: "Reproductor persistente de Bug Cesante",
+    });
+
+    expect(identity).toBeInTheDocument();
+    expect(outlet).toContainElement(player);
+    expect(social).toBeInTheDocument();
+    expect(screen.getAllByRole("complementary", {
+      name: "Reproductor persistente de Bug Cesante",
+    })).toHaveLength(1);
+    if (identity === null || social === null) throw new Error("Alternate header regions are unavailable.");
+    expect(identity.compareDocumentPosition(player) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(player.compareDocumentPosition(social) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("reveals existing project badges through one accessible disclosure at a time", async () => {
     const user = userEvent.setup();
     render(<AlternatePortfolio />);

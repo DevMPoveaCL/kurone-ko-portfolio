@@ -9389,18 +9389,6 @@ h2 {
   transform: translateY(-0.08rem);
 }
 
-/* Alternate portfolio: a fixed editorial grid on desktop, a normal document
-   flow on touch-sized viewports. */
-@media (min-width: 64.0625rem) {
-  .bug-cesante-player[data-presentation="alternate"] {
-    inset-block-end: auto;
-    inset-block-start: max(1rem, env(safe-area-inset-top));
-    inset-inline-end: auto;
-    inset-inline-start: 50%;
-    transform: translateX(-50%);
-  }
-}
-
 .portfolio-alternate {
   --portfolio-line: rgba(244, 242, 236, 0.2);
   --portfolio-line-strong: rgba(244, 242, 236, 0.55);
@@ -10022,6 +10010,76 @@ h2 {
   .vault-alternate-portfolio-link {
     display: inline-grid;
     place-items: center;
+  }
+}
+
+/* The alternate player is a header-owned grid item above mobile. Keeping the
+   outlet in the header lets the provider move the existing player node without
+   creating a second transport or landmark. */
+.portfolio-alternate-player-outlet {
+  min-inline-size: 0;
+}
+
+@media (min-width: 48.0625rem) {
+  .portfolio-alternate-header {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "identity"
+      "player"
+      "social";
+    row-gap: 0.7rem;
+  }
+
+  .portfolio-alternate-identity {
+    grid-area: identity;
+    inline-size: fit-content;
+    max-inline-size: 100%;
+    justify-self: start;
+  }
+
+  .portfolio-alternate-role {
+    max-inline-size: min(100%, 38rem);
+    text-wrap: balance;
+  }
+
+  .portfolio-alternate-player-outlet {
+    display: grid;
+    grid-area: player;
+    inline-size: min(24rem, calc(100vw - 2rem));
+    justify-self: center;
+    min-inline-size: 0;
+    place-items: start center;
+  }
+
+  .portfolio-alternate-player-outlet > .bug-cesante-player {
+    position: relative;
+    inset: auto;
+    inline-size: 100%;
+    max-inline-size: 24rem;
+    transform: none;
+  }
+
+  .portfolio-alternate-social {
+    grid-area: social;
+    justify-self: end;
+  }
+}
+
+@media (min-width: 75.0625rem) {
+  .portfolio-alternate-header {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-areas: "identity player social";
+    align-items: start;
+  }
+
+  .portfolio-alternate-player-outlet {
+    inline-size: 24rem;
+  }
+}
+
+@media (max-width: 48rem) {
+  .portfolio-alternate-player-outlet {
+    display: contents;
   }
 }
 

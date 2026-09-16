@@ -840,6 +840,140 @@ test.describe("Immersive accessible portfolio", () => {
   );
 
   test(
+    "keeps the header outlet centered across audited widths after the real handoff",
+    { tag: ["@critical", "@e2e", "@portfolio", "@PORTFOLIO-ALTERNATE-HEADER-E2E-002"] },
+    async ({ page }) => {
+      const portfolio = new PortfolioPage(page);
+      const viewports = [
+        { height: 900, width: 1440 },
+        { height: 864, width: 1280 },
+        { height: 800, width: 1200 },
+        { height: 800, width: 1170 },
+        { height: 800, width: 1169 },
+        { height: 800, width: 1165 },
+        { height: 800, width: 1150 },
+        { height: 800, width: 1025 },
+        { height: 800, width: 1024 },
+        { height: 800, width: 962 },
+        { height: 800, width: 961 },
+        { height: 800, width: 900 },
+        { height: 800, width: 848 },
+        { height: 800, width: 800 },
+        { height: 800, width: 769 },
+        { height: 844, width: 768 },
+        { height: 844, width: 767 },
+        { height: 844, width: 700 },
+        { height: 844, width: 672 },
+        { height: 844, width: 390 },
+        { height: 667, width: 375 },
+      ];
+
+      await page.setViewportSize(viewports[0]!);
+      await portfolio.gotoPortfolio();
+      await expect(portfolio.alternateEntry).toBeVisible();
+      await portfolio.alternateEntry.click();
+      await expect(portfolio.alternateCards).toHaveCount(13);
+
+      const contentSnapshot = await page.evaluate(() => ({
+        cards: [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-card")].map((card) => card.querySelector("h2")?.textContent),
+        ticker: document.querySelector<HTMLElement>(".portfolio-alternate-ticker")?.textContent,
+      }));
+
+      const readGeometry = () => page.evaluate(() => {
+        const identity = document.querySelector<HTMLElement>(".portfolio-alternate-identity");
+        const player = document.querySelector<HTMLElement>('.bug-cesante-player[data-presentation="alternate"]');
+        const nav = document.querySelector<HTMLElement>(".portfolio-alternate-social");
+        const header = document.querySelector<HTMLElement>(".portfolio-alternate-header");
+        const ticker = document.querySelector<HTMLElement>(".portfolio-alternate-ticker");
+        const outlet = document.querySelector<HTMLElement>(".portfolio-alternate-player-outlet");
+        if (identity === null || player === null || nav === null || header === null || ticker === null || outlet === null) {
+          throw new Error("Alternate header geometry probes are unavailable.");
+        }
+
+        const rect = (element: HTMLElement) => element.getBoundingClientRect();
+        const intersects = (left: DOMRect, right: DOMRect) =>
+          left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+        const identityRect = rect(identity);
+        const playerRect = rect(player);
+        const navRect = rect(nav);
+        const headerRect = rect(header);
+        const tickerRect = rect(ticker);
+        const targets = [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-header a, .bug-cesante-player button, .bug-cesante-player input")].map((target) => rect(target));
+        const controls = [...player.querySelectorAll<HTMLElement>("button, input[type='range']")].map((control) => rect(control));
+        const center = (box: DOMRect) => box.left + box.width / 2;
+        return {
+          centerDelta: Math.abs(center(playerRect) - window.innerWidth / 2),
+          controls: controls.map(({ height, width }) => ({ height, width })),
+          documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          headerTickerSeparated: headerRect.bottom <= tickerRect.top + 1,
+          identityNavOverlap: intersects(identityRect, navRect),
+          outletDisplay: getComputedStyle(outlet).display,
+          playerContainedByHeader: playerRect.left >= headerRect.left - 1 && playerRect.right <= headerRect.right + 1 && playerRect.top >= headerRect.top - 1 && playerRect.bottom <= headerRect.bottom + 1,
+          playerHeaderOverlap: intersects(playerRect, identityRect) || intersects(playerRect, navRect),
+          playerInViewport: playerRect.left >= -1 && playerRect.right <= window.innerWidth + 1 && playerRect.top >= -1 && playerRect.bottom <= window.innerHeight + 1,
+          playerNavOverlap: intersects(playerRect, navRect),
+          playerParentIsOutlet: player.parentElement === outlet,
+          playerPosition: getComputedStyle(player).position,
+          targetsMeetMinimum: targets.every(({ height, width }) => height >= 44 && width >= 44),
+          viewport: { height: window.innerHeight, width: window.innerWidth },
+        };
+      });
+
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        const metrics = await readGeometry();
+        const mode = viewport.width >= 1201 ? "wide" : viewport.width >= 769 ? "intermediate" : "mobile";
+
+        expect(metrics.centerDelta, `${viewport.width}px player center`).toBeLessThanOrEqual(1);
+        expect(metrics.documentOverflow, `${viewport.width}px document overflow`).toBe(false);
+        expect(metrics.headerTickerSeparated, `${viewport.width}px header/ticker separation`).toBe(true);
+        expect(metrics.identityNavOverlap, `${viewport.width}px identity/nav overlap`).toBe(false);
+        expect(metrics.playerInViewport, `${viewport.width}px player viewport bounds`).toBe(true);
+        expect(metrics.playerNavOverlap, `${viewport.width}px player/nav overlap`).toBe(false);
+        expect(metrics.playerParentIsOutlet, `${viewport.width}px player outlet ownership`).toBe(true);
+        expect(metrics.targetsMeetMinimum, `${viewport.width}px target size`).toBe(true);
+        expect(metrics.outletDisplay).toBe(mode === "mobile" ? "contents" : "grid");
+        expect(metrics.playerPosition).toBe(mode === "mobile" ? "fixed" : "relative");
+        if (mode === "intermediate") {
+          expect(metrics.playerHeaderOverlap, `${viewport.width}px player/header content overlap`).toBe(false);
+          expect(metrics.playerContainedByHeader, `${viewport.width}px player/header containment`).toBe(true);
+        }
+      }
+
+      await page.setViewportSize({ height: 800, width: 1170 });
+      const role = page.locator(".portfolio-alternate-role");
+      await role.evaluate((element) => {
+        element.textContent = `${element.textContent} · SOFTWARE ARCHITECTURE · TESTING · DELIVERY`;
+        element.style.maxInlineSize = "18rem";
+      });
+      const longSubtitleMetrics = await readGeometry();
+      expect(longSubtitleMetrics.documentOverflow).toBe(false);
+      expect(longSubtitleMetrics.centerDelta).toBeLessThanOrEqual(1);
+      expect(longSubtitleMetrics.playerNavOverlap).toBe(false);
+      expect(longSubtitleMetrics.targetsMeetMinimum).toBe(true);
+
+      await page.getByRole("link", { name: "Volver", exact: true }).focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(page.locator('.bug-cesante-player button[aria-label="Reproducir canción"]')).toBeFocused();
+      expect(await page.locator('.bug-cesante-player button[aria-label="Reproducir canción"]').evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+
+      await page.setViewportSize({ height: 900, width: 1200 });
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "200%";
+      });
+      const zoomMetrics = await readGeometry();
+      expect(zoomMetrics.documentOverflow).toBe(false);
+      expect(zoomMetrics.centerDelta).toBeLessThanOrEqual(1);
+      expect(zoomMetrics.playerNavOverlap).toBe(false);
+      await page.evaluate(() => document.documentElement.style.removeProperty("font-size"));
+
+      expect(await page.locator(".portfolio-alternate-card").count()).toBe(13);
+      expect(await page.locator(".portfolio-alternate-ticker").textContent()).toBe(contentSnapshot.ticker);
+      expect(await page.locator(".portfolio-alternate-card h2").allTextContents()).toEqual(contentSnapshot.cards);
+    },
+  );
+
+  test(
     "uses one shared audio element and exposes keyboard-accessible lyric seeking",
     { tag: ["@high", "@e2e", "@portfolio", "@PORTFOLIO-AUDIO-E2E-001"] },
     async ({ page }) => {

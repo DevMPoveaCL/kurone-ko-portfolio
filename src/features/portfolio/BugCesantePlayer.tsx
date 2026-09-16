@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { acquireAudioTransportOwner, ownsAudioTransport, releaseAudioTransportOwner } from "@/shared/media/audio-controller";
 import { resolveBugCesanteAudioSource } from "@/shared/media/audio-source";
 import { withPublicPath } from "@/shared/routing/public-path";
@@ -122,6 +123,7 @@ interface BugCesantePlayerContextValue {
   movementUnlocked: boolean;
   unlockPlayerMovement: () => void;
   registerSocialFocus: (element: HTMLElement | null) => void;
+  registerPlayerOutlet: (element: HTMLElement | null) => void;
   seekTo: (time: number) => void;
   seekStatus: SeekStatus;
   pendingSeekTime: number | null;
@@ -462,6 +464,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [seekStatus, setSeekStatus] = useState<SeekStatus>(SEEK_STATUS.IDLE);
   const [seekFailureMessage, setSeekFailureMessage] = useState<string | null>(null);
+  const [playerOutletElement, setPlayerOutletElement] = useState<HTMLElement | null>(null);
   const movementUnlockedRef = useRef(movementUnlocked);
   const keyboardMovementModeRef = useRef(false);
   const keyboardMovementReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -1166,6 +1169,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     movementUnlocked,
     pendingSeekTime,
     releaseTransport,
+    registerPlayerOutlet: setPlayerOutletElement,
     unlockPlayerMovement,
     registerSocialFocus,
     seekTo,
@@ -1185,62 +1189,64 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   ));
   const sliderValue = pendingSeekTime ?? currentTime;
 
+  const player = playerVisible ? (
+    <aside
+      aria-label="Reproductor persistente de Bug Cesante"
+      className="bug-cesante-player"
+      data-presentation={presentation === PLAYER_PRESENTATION.ALTERNATE ? presentation : undefined}
+      data-minimized={hidden}
+      data-positioned={renderedPosition === null ? undefined : "true"}
+      onKeyDown={handlePlayerNavigationKeyDown}
+      ref={(element) => {
+        playerRef.current = element;
+        element?.setAttribute("data-player-ready", "true");
+      }}
+      style={renderedPosition === null ? undefined : { inset: `${renderedPosition.y}px auto auto ${renderedPosition.x}px` }}
+    >
+      <header className="bug-cesante-player-handle">
+        {presentation === PLAYER_PRESENTATION.ALTERNATE ? null : isCoarseLayout ? <div className="bug-cesante-player-drag-handle"><span className="bug-cesante-player-title">BUG CESANTE</span></div> : (
+          <div
+            aria-label="Mover reproductor. Usa las flechas para moverlo o Escape para restablecerlo."
+            aria-roledescription="control de arrastre"
+            className="bug-cesante-player-drag-handle"
+            onKeyDown={handleHandleKeyDown}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={finishDrag}
+            onPointerCancel={finishDrag}
+            role="button"
+            tabIndex={0}
+          >
+            <span className="bug-cesante-player-title">BUG CESANTE <span>· canción laboral</span></span>
+          </div>
+        )}
+        {presentation === PLAYER_PRESENTATION.PRIMARY ? <button aria-expanded={!hidden} aria-label={hidden ? "Restaurar reproductor" : "Minimizar reproductor"} className="bug-cesante-player-minimize" onClick={() => { const nextHidden = !hidden; setHidden(nextHidden); persist({ hidden: nextHidden }); }} ref={minimizeRef} type="button"><span aria-hidden="true">{hidden ? "+" : "−"}</span></button> : null}
+      </header>
+      {!hidden ? <div className="bug-cesante-player-controls">
+        <button aria-label={isPlaying ? "Pausar canción" : "Reproducir canción"} className="bug-cesante-player-icon-button" onClick={togglePlayback} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.PLAY; }} ref={playRef} type="button"><PlayerIcon name={isPlaying ? "pause" : "play"} /></button>
+        <button aria-label="Reiniciar canción" className="bug-cesante-player-icon-button" onClick={() => seekTo(0)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.RESET; }} ref={resetRef} type="button"><PlayerIcon name="reset" /></button>
+        <label className="bug-cesante-player-seek-label">
+          <span className="visually-hidden">Posición de la canción</span>
+          <input aria-label="Posición de la canción" aria-valuetext={pendingSeekTime === null ? formatTime(currentTime) : `Solicitando ${formatTime(pendingSeekTime)}. Tiempo actual ${formatTime(currentTime)}.`} className="bug-cesante-player-seek" data-seek-status={seekStatus} max={duration || 0} min="0" onChange={(event) => seekTo(Number(event.target.value))} step="0.01" type="range" value={Math.min(sliderValue, duration > 0 ? duration : sliderValue)} />
+        </label>
+        <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+        {pendingSeekTime === null ? null : <span aria-live="polite" className="visually-hidden">Buscando {formatTime(pendingSeekTime)}. El tiempo confirmado sigue en {formatTime(currentTime)}.</span>}
+        {seekFailureMessage === null ? null : <span aria-label={seekFailureMessage} aria-live="polite" className="visually-hidden" role="status">{seekFailureMessage}</span>}
+        {hideAlternateMobileLyricsToggle ? null : <button aria-controls="bug-cesante-lyrics-surface" aria-expanded={lyricsExpanded} aria-label={lyricsExpanded ? "Ocultar letra" : "Mostrar letra"} className="bug-cesante-player-lyrics-toggle" onClick={() => setLyricsExpanded(!lyricsExpanded)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.LYRICS; }} ref={lyricsToggleRef} type="button">{lyricsExpanded ? "Ocultar letra" : "Letra"}</button>}
+      </div> : null}
+      {!hidden && lyricsExpanded && !isCoarseLayout && !isCoarseViewport() ? <div className="bug-cesante-player-lyrics" id="bug-cesante-lyrics-surface" onScroll={markManualLyricsScroll} ref={lyricsScrollRef}>
+        {lyricsStatus === LYRICS_STATUS.LOADING ? <p role="status">Cargando letra…</p> : null}
+        {lyricsStatus === LYRICS_STATUS.UNAVAILABLE ? <p role="status">La letra no está disponible, pero la reproducción sigue activa.</p> : null}
+        {lyricsStatus === LYRICS_STATUS.READY ? renderLyricCues() : null}
+      </div> : null}
+    </aside>
+  ) : null;
+
   return (
     <BugCesantePlayerContext.Provider value={contextValue}>
-       <div className="bug-cesante-player-scope" inert={lyricsExpanded && (isCoarseLayout || isCoarseViewport()) ? true : undefined}>{children}</div>
-       <BugCesanteMobileSafeZone isActive={playerVisible} isMinimized={hidden} presentation={presentation} />
-      {playerVisible ? (
-          <aside
-           aria-label="Reproductor persistente de Bug Cesante"
-             className="bug-cesante-player"
-             data-presentation={presentation === PLAYER_PRESENTATION.ALTERNATE ? presentation : undefined}
-           data-minimized={hidden}
-           data-positioned={renderedPosition === null ? undefined : "true"}
-           onKeyDown={handlePlayerNavigationKeyDown}
-            ref={(element) => {
-              playerRef.current = element;
-              element?.setAttribute("data-player-ready", "true");
-            }}
-          style={renderedPosition === null ? undefined : { inset: `${renderedPosition.y}px auto auto ${renderedPosition.x}px` }}
-        >
-           <header className="bug-cesante-player-handle">
-              {presentation === PLAYER_PRESENTATION.ALTERNATE ? null : isCoarseLayout ? <div className="bug-cesante-player-drag-handle"><span className="bug-cesante-player-title">BUG CESANTE</span></div> : (
-               <div
-                 aria-label="Mover reproductor. Usa las flechas para moverlo o Escape para restablecerlo."
-                 aria-roledescription="control de arrastre"
-                 className="bug-cesante-player-drag-handle"
-                 onKeyDown={handleHandleKeyDown}
-                 onPointerDown={handlePointerDown}
-                 onPointerMove={handlePointerMove}
-                 onPointerUp={finishDrag}
-                 onPointerCancel={finishDrag}
-                 role="button"
-                 tabIndex={0}
-               >
-                 <span className="bug-cesante-player-title">BUG CESANTE <span>· canción laboral</span></span>
-               </div>
-             )}
-              {presentation === PLAYER_PRESENTATION.PRIMARY ? <button aria-expanded={!hidden} aria-label={hidden ? "Restaurar reproductor" : "Minimizar reproductor"} className="bug-cesante-player-minimize" onClick={() => { const nextHidden = !hidden; setHidden(nextHidden); persist({ hidden: nextHidden }); }} ref={minimizeRef} type="button"><span aria-hidden="true">{hidden ? "+" : "−"}</span></button> : null}
-          </header>
-           {!hidden ? <div className="bug-cesante-player-controls">
-             <button aria-label={isPlaying ? "Pausar canción" : "Reproducir canción"} className="bug-cesante-player-icon-button" onClick={togglePlayback} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.PLAY; }} ref={playRef} type="button"><PlayerIcon name={isPlaying ? "pause" : "play"} /></button>
-             <button aria-label="Reiniciar canción" className="bug-cesante-player-icon-button" onClick={() => seekTo(0)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.RESET; }} ref={resetRef} type="button"><PlayerIcon name="reset" /></button>
-            <label className="bug-cesante-player-seek-label">
-              <span className="visually-hidden">Posición de la canción</span>
-               <input aria-label="Posición de la canción" aria-valuetext={pendingSeekTime === null ? formatTime(currentTime) : `Solicitando ${formatTime(pendingSeekTime)}. Tiempo actual ${formatTime(currentTime)}.`} className="bug-cesante-player-seek" data-seek-status={seekStatus} max={duration || 0} min="0" onChange={(event) => seekTo(Number(event.target.value))} step="0.01" type="range" value={Math.min(sliderValue, duration > 0 ? duration : sliderValue)} />
-             </label>
-               <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
-               {pendingSeekTime === null ? null : <span aria-live="polite" className="visually-hidden">Buscando {formatTime(pendingSeekTime)}. El tiempo confirmado sigue en {formatTime(currentTime)}.</span>}
-               {seekFailureMessage === null ? null : <span aria-label={seekFailureMessage} aria-live="polite" className="visually-hidden" role="status">{seekFailureMessage}</span>}
-              {hideAlternateMobileLyricsToggle ? null : <button aria-controls="bug-cesante-lyrics-surface" aria-expanded={lyricsExpanded} aria-label={lyricsExpanded ? "Ocultar letra" : "Mostrar letra"} className="bug-cesante-player-lyrics-toggle" onClick={() => setLyricsExpanded(!lyricsExpanded)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.LYRICS; }} ref={lyricsToggleRef} type="button">{lyricsExpanded ? "Ocultar letra" : "Letra"}</button>}
-           </div> : null}
-            {!hidden && lyricsExpanded && !isCoarseLayout && !isCoarseViewport() ? <div className="bug-cesante-player-lyrics" id="bug-cesante-lyrics-surface" onScroll={markManualLyricsScroll} ref={lyricsScrollRef}>
-             {lyricsStatus === LYRICS_STATUS.LOADING ? <p role="status">Cargando letra…</p> : null}
-             {lyricsStatus === LYRICS_STATUS.UNAVAILABLE ? <p role="status">La letra no está disponible, pero la reproducción sigue activa.</p> : null}
-              {lyricsStatus === LYRICS_STATUS.READY ? renderLyricCues() : null}
-           </div> : null}
-         </aside>
-       ) : null}
+      <div className="bug-cesante-player-scope" inert={lyricsExpanded && (isCoarseLayout || isCoarseViewport()) ? true : undefined}>{children}</div>
+      <BugCesanteMobileSafeZone isActive={playerVisible} isMinimized={hidden} presentation={presentation} />
+      {playerOutletElement === null ? player : createPortal(player, playerOutletElement)}
        {showLyricsSurface ? <section aria-label="Letra de Bug Cesante" aria-modal="true" className="bug-cesante-lyrics-surface" data-presentation={presentation} id="bug-cesante-lyrics-surface" role="dialog">
          <header className="bug-cesante-lyrics-header">
            <div>
@@ -1257,6 +1263,12 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
       </section> : null}
     </BugCesantePlayerContext.Provider>
   );
+}
+
+export function BugCesantePlayerOutlet() {
+  const { registerPlayerOutlet } = useBugCesantePlayer();
+
+  return <div className="portfolio-alternate-player-outlet" ref={registerPlayerOutlet} />;
 }
 
 export function useBugCesantePlayer() {

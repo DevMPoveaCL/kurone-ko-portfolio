@@ -185,7 +185,7 @@ test.describe("session progression guards", () => {
 
     await expect(page.getByRole("link", { name: "VERSIÓN MINIMALISTA" })).toBeVisible();
     await page.getByRole("link", { name: "VERSIÓN MINIMALISTA" }).click();
-    await expect(page).toHaveURL(/\/portfolio$/);
+    await expect(page).toHaveURL(/\/portfolio\/$/);
     await expect(portfolio.alternateCards).toHaveCount(13);
 
     await page.getByRole("link", { name: "Volver" }).click();
@@ -235,7 +235,7 @@ test.describe("session progression guards", () => {
     const portfolio = new PortfolioPage(page);
     await portfolio.gotoPortfolio();
     await page.getByRole("link", { name: "VERSIÓN MINIMALISTA" }).click();
-    await expect(page).toHaveURL(/\/portfolio$/);
+    await expect(page).toHaveURL(/\/portfolio\/$/);
     await expect(portfolio.alternateCards).toHaveCount(13, { timeout: 30_000 });
     await resetNoFlashProbe(page);
 

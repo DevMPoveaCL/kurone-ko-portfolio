@@ -15,6 +15,7 @@ import {
 } from "@/shared/a11y/motion-preferences";
 import {
   BugCesantePlayerProvider,
+  BugCesantePlayerOutlet,
   PLAYER_PRESENTATION,
   useBugCesantePlayer,
 } from "./BugCesantePlayer";
@@ -148,6 +149,7 @@ function PortfolioHeader() {
           INGENIERO EN INFORMÁTICA · UNIVERSIDAD UNIACC
         </p>
       </div>
+      <BugCesantePlayerOutlet />
       <nav
         aria-label="Perfiles profesionales"
         className="portfolio-alternate-social"
