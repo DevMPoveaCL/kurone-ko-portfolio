@@ -911,6 +911,7 @@ test.describe("Immersive accessible portfolio", () => {
         cards: [...document.querySelectorAll<HTMLElement>(".portfolio-alternate-card")].map((card) => card.querySelector("h2")?.textContent),
         ticker: document.querySelector<HTMLElement>(".portfolio-alternate-ticker")?.textContent,
       }));
+      const player = page.locator('.bug-cesante-player[data-presentation="alternate"]');
 
       const readGeometry = () => page.evaluate(() => {
         const identity = document.querySelector<HTMLElement>(".portfolio-alternate-identity");
@@ -975,6 +976,13 @@ test.describe("Immersive accessible portfolio", () => {
           expect(metrics.playerContainedByHeader, `${viewport.width}px player/header containment`).toBe(true);
         } else if (mode === "wide") {
           expect(metrics.headerRowTops, `${viewport.width}px wide header row bands`).toHaveLength(1);
+        }
+
+        if (viewport.width === 375 || viewport.width === 390) {
+          await page.evaluate(() => document.fonts.ready);
+          await expect(player).toHaveScreenshot(`alternate-player-${viewport.width}x${viewport.height}.png`, {
+            animations: "disabled",
+          });
         }
       }
 

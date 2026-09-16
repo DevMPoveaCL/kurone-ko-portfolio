@@ -10018,6 +10018,12 @@ h2 {
   }
 }
 
+@media (max-width: 48rem) {
+  .portfolio-alternate {
+    isolation: auto;
+  }
+}
+
 /* The alternate player is a header-owned grid item above mobile. Keeping the
    outlet in the header lets the provider move the existing player node without
    creating a second transport or landmark. */
