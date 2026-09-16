@@ -1,11 +1,11 @@
 "use client";
 
 import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { getSharedAudioElement } from "@/shared/media/audio-controller";
+import { acquireAudioTransportOwner, ownsAudioTransport, releaseAudioTransportOwner } from "@/shared/media/audio-controller";
+import { resolveBugCesanteAudioSource } from "@/shared/media/audio-source";
 import { withPublicPath } from "@/shared/routing/public-path";
 import { KEYCAP_ASSET } from "./keycap-assets";
 
-const AUDIO_SRC = "/assets/audio/bug-cesante.ogg";
 const LYRICS_SRC = "/assets/audio/bug-cesante.lyrics.vtt";
 export const PLAYER_PRESENTATION = {
   PRIMARY: "primary",
@@ -23,6 +23,7 @@ const COARSE_VIEWPORT_QUERY = "(max-width: 48rem), (pointer: coarse)";
 const PLAYER_MARGIN = 16;
 const PLAYER_KEYBOARD_STEP = 32;
 const MANUAL_SCROLL_TIMEOUT = 1600;
+const SEEK_FAILURE_TIMEOUT = 1500;
 
 const PLAYER_BOTTOM_CONTROL = {
   PLAY: "play",
@@ -42,6 +43,7 @@ type LyricsStatus = (typeof LYRICS_STATUS)[keyof typeof LYRICS_STATUS];
 
 const SEEK_STATUS = {
   CONFIRMED: "confirmed",
+  FAILED: "failed",
   IDLE: "idle",
   PENDING: "pending",
 } as const;
@@ -123,6 +125,7 @@ interface BugCesantePlayerContextValue {
   seekTo: (time: number) => void;
   seekStatus: SeekStatus;
   pendingSeekTime: number | null;
+  releaseTransport: () => void;
   setLyricsExpanded: (expanded: boolean) => void;
   showPlayer: () => void;
   togglePlayback: () => void;
@@ -440,6 +443,8 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const manualScrollTimeoutRef = useRef<number | null>(null);
   const autoScrollingRef = useRef(false);
   const dragRef = useRef<{ offsetX: number; offsetY: number; pointerId: number } | null>(null);
+  const confirmedTimeRef = useRef(0);
+  const seekFailureTimeoutRef = useRef<number | null>(null);
   const [storedState, setStoredState] = useState<StoredPlayerState | null>(null);
   const [isCoarseLayout, setIsCoarseLayout] = useState(false);
   const isCoarseLayoutRef = useRef(isCoarseLayout);
@@ -456,6 +461,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const [movementUnlocked, setMovementUnlocked] = useState(false);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [seekStatus, setSeekStatus] = useState<SeekStatus>(SEEK_STATUS.IDLE);
+  const [seekFailureMessage, setSeekFailureMessage] = useState<string | null>(null);
   const movementUnlockedRef = useRef(movementUnlocked);
   const keyboardMovementModeRef = useRef(false);
   const keyboardMovementReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -489,6 +495,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
       setStoredState(restoredState);
       setActivated(restoredState.activated);
       setHidden(restoredState.hidden);
+      confirmedTimeRef.current = restoredState.currentTime;
       setCurrentTime(restoredState.currentTime);
       setLyricsExpandedState(restoredState.lyricsExpanded);
       setPosition(isCoarseViewport() ? null : restoredState.position);
@@ -504,9 +511,10 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   const attemptPendingSeekEvent = useEffectEvent(attemptPendingSeek);
   const confirmSeekIfSettledEvent = useEffectEvent(confirmSeekIfSettled);
   const restoreActualMediaTimeEvent = useEffectEvent(restoreActualMediaTime);
+  const pauseAndPersistTransportEvent = useEffectEvent(pauseAndPersistTransport);
 
   useEffect(() => {
-    const audio = getSharedAudioElement(withPublicPath(AUDIO_SRC));
+    const audio = acquireAudioTransportOwner(presentation, resolveBugCesanteAudioSource());
     audioRef.current = audio;
     const syncTime = () => {
       attemptPendingSeekEvent();
@@ -522,24 +530,31 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     const syncPlayback = () => setIsPlaying(!audio.paused && !audio.ended);
     const handlePause = () => {
       syncPlayback();
-      persistEvent({ currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0, paused: true });
+      persistEvent({
+        currentTime: pendingSeekRef.current === null
+          ? Number.isFinite(audio.currentTime) ? audio.currentTime : 0
+          : confirmedTimeRef.current,
+        paused: true,
+      });
     };
     const handlePlay = () => {
       syncPlayback();
       persistEvent({ paused: false });
     };
     const handleEnded = () => {
+      clearSeekFailureTimeout();
       setIsPlaying(false);
       pendingSeekRef.current = null;
       seekAttemptedTargetRef.current = null;
       setPendingSeekTime(null);
       setSeekStatus(SEEK_STATUS.IDLE);
+      setSeekFailureMessage(null);
       updateTimeEvent(0);
       persistEvent({ currentTime: 0, paused: true });
     };
     const handleError = () => {
       setIsPlaying(false);
-      restoreActualMediaTimeEvent(audio);
+      restoreActualMediaTimeEvent(audio, pendingSeekRef.current !== null);
     };
 
     audio.addEventListener("canplaythrough", attemptPendingSeekEvent);
@@ -568,9 +583,26 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
       audio.removeEventListener("progress", attemptPendingSeekEvent);
       audio.removeEventListener("seeked", confirmSeekIfSettledEvent);
       audio.removeEventListener("timeupdate", syncTime);
+      clearSeekFailureTimeout();
+      if (ownsAudioTransport(presentation)) pauseAndPersistTransportEvent();
+      releaseAudioTransportOwner(presentation);
       audioRef.current = null;
     };
   }, [presentation]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") pauseAndPersistTransportEvent();
+    };
+    const handlePageHide = () => pauseAndPersistTransportEvent();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, []);
 
   function persist(next?: Partial<StoredPlayerState>) {
     const audio = audioRef.current;
@@ -590,9 +622,11 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
   }
 
   function updateTime(nextTime: number) {
-    setCurrentTime(nextTime);
+    const safeTime = Number.isFinite(nextTime) ? Math.max(0, nextTime) : 0;
+    confirmedTimeRef.current = safeTime;
+    setCurrentTime(safeTime);
     setActiveCueIndex((currentIndex) => {
-      const nextIndex = findCueIndex(lyrics, nextTime);
+      const nextIndex = findCueIndex(lyrics, safeTime);
       return currentIndex === nextIndex ? currentIndex : nextIndex;
     });
   }
@@ -601,14 +635,31 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     return Math.min(Math.max(0, nextTime), Number.isFinite(audio.duration) ? audio.duration : Math.max(0, nextTime));
   }
 
-  function restoreActualMediaTime(audio: HTMLAudioElement) {
-    const actualTime = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+  function clearSeekFailureTimeout() {
+    if (seekFailureTimeoutRef.current === null) return;
+    window.clearTimeout(seekFailureTimeoutRef.current);
+    seekFailureTimeoutRef.current = null;
+  }
+
+  function restoreActualMediaTime(audio: HTMLAudioElement, failed = false, useConfirmedTime = false) {
+    const actualTime = useConfirmedTime
+      ? confirmedTimeRef.current
+      : Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : confirmedTimeRef.current;
+    clearSeekFailureTimeout();
     pendingSeekRef.current = null;
     seekAttemptedTargetRef.current = null;
     setPendingSeekTime(null);
-    setSeekStatus(SEEK_STATUS.IDLE);
+    setSeekStatus(failed ? SEEK_STATUS.FAILED : SEEK_STATUS.IDLE);
+    setSeekFailureMessage(failed ? "No se pudo buscar esa posición; se mantuvo el tiempo confirmado." : null);
+    if (useConfirmedTime) {
+      try {
+        audio.currentTime = actualTime;
+      } catch {
+        // Restoring the confirmed value is best effort when media metadata is unavailable.
+      }
+    }
     updateTime(actualTime);
-    persist({ currentTime: actualTime });
+    persist({ currentTime: actualTime, paused: audio.paused });
   }
 
   function attemptPendingSeek() {
@@ -620,8 +671,12 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     seekAttemptedTargetRef.current = target;
     try {
       audio.currentTime = target;
+      clearSeekFailureTimeout();
+      seekFailureTimeoutRef.current = window.setTimeout(() => {
+        if (pendingSeekRef.current === target) restoreActualMediaTime(audio, true, true);
+      }, SEEK_FAILURE_TIMEOUT);
     } catch {
-      restoreActualMediaTime(audio);
+      restoreActualMediaTime(audio, true);
     }
   }
 
@@ -629,21 +684,29 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     const audio = audioRef.current;
     const target = pendingSeekRef.current;
     const actualTime = audio?.currentTime;
-    if (audio === null || target === null || typeof actualTime !== "number" || !Number.isFinite(actualTime) || Math.abs(actualTime - target) > 0.25) return;
+    if (audio === null || target === null) return;
+    if (typeof actualTime !== "number" || !Number.isFinite(actualTime) || Math.abs(actualTime - target) > 0.25) {
+      restoreActualMediaTime(audio, true);
+      return;
+    }
 
     const confirmedTime = Math.max(0, actualTime);
+    clearSeekFailureTimeout();
     pendingSeekRef.current = null;
     seekAttemptedTargetRef.current = null;
     setPendingSeekTime(null);
     setSeekStatus(SEEK_STATUS.CONFIRMED);
+    setSeekFailureMessage(null);
     updateTime(confirmedTime);
-    persist({ currentTime: confirmedTime });
+    persist({ currentTime: confirmedTime, paused: audio.paused });
   }
 
   function seekTo(nextTime: number) {
     const audio = audioRef.current;
     if (audio === null) return;
     const safeTime = getSafeSeekTime(nextTime, audio);
+    clearSeekFailureTimeout();
+    setSeekFailureMessage(null);
     pendingSeekRef.current = safeTime;
     seekAttemptedTargetRef.current = null;
     setPendingSeekTime(safeTime);
@@ -672,6 +735,44 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     setHidden(false);
     persist({ activated: true, hidden: false });
     if (options.attemptPlay === true) attemptPlay();
+  }
+
+  function pauseAndPersistTransport() {
+    if (!ownsAudioTransport(presentation)) return;
+    const audio = audioRef.current;
+    if (audio === null) return;
+
+    const confirmedTime = pendingSeekRef.current === null && Number.isFinite(audio.currentTime)
+      ? Math.max(0, audio.currentTime)
+      : confirmedTimeRef.current;
+    audio.pause();
+    setIsPlaying(false);
+    if (pendingSeekRef.current !== null) {
+      clearSeekFailureTimeout();
+      pendingSeekRef.current = null;
+      seekAttemptedTargetRef.current = null;
+      setPendingSeekTime(null);
+      setSeekStatus(SEEK_STATUS.IDLE);
+      setSeekFailureMessage(null);
+      try {
+        audio.currentTime = confirmedTime;
+      } catch {
+        // A background transition must not block pausing when media cannot seek yet.
+      }
+    }
+    updateTime(confirmedTime);
+    persist({ currentTime: confirmedTime, paused: true });
+  }
+
+  function releaseTransport() {
+    if (!ownsAudioTransport(presentation)) return;
+    pauseAndPersistTransport();
+    clearSeekFailureTimeout();
+    pendingSeekRef.current = null;
+    seekAttemptedTargetRef.current = null;
+    setPendingSeekTime(null);
+    setSeekStatus(SEEK_STATUS.IDLE);
+    releaseAudioTransportOwner(presentation);
   }
 
   function unlockPlayerMovement() {
@@ -856,7 +957,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     let frame = 0;
     const tick = (timestamp: number) => {
       const audio = audioRef.current;
-      if (audio !== null && !audio.paused) {
+      if (audio !== null && !audio.paused && pendingSeekRef.current === null) {
         updateTimeEvent(audio.currentTime);
         if (timestamp - lastPersistedAtRef.current > 500) {
           lastPersistedAtRef.current = timestamp;
@@ -1064,6 +1165,7 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
     lyricsStatus,
     movementUnlocked,
     pendingSeekTime,
+    releaseTransport,
     unlockPlayerMovement,
     registerSocialFocus,
     seekTo,
@@ -1127,8 +1229,9 @@ export function BugCesantePlayerProvider({ children, presentation = PLAYER_PRESE
               <span className="visually-hidden">Posición de la canción</span>
                <input aria-label="Posición de la canción" aria-valuetext={pendingSeekTime === null ? formatTime(currentTime) : `Solicitando ${formatTime(pendingSeekTime)}. Tiempo actual ${formatTime(currentTime)}.`} className="bug-cesante-player-seek" data-seek-status={seekStatus} max={duration || 0} min="0" onChange={(event) => seekTo(Number(event.target.value))} step="0.01" type="range" value={Math.min(sliderValue, duration > 0 ? duration : sliderValue)} />
              </label>
-             <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
-              {pendingSeekTime === null ? null : <span aria-live="polite" className="visually-hidden">Buscando {formatTime(pendingSeekTime)}. El tiempo confirmado sigue en {formatTime(currentTime)}.</span>}
+               <span aria-live="off" className="bug-cesante-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+               {pendingSeekTime === null ? null : <span aria-live="polite" className="visually-hidden">Buscando {formatTime(pendingSeekTime)}. El tiempo confirmado sigue en {formatTime(currentTime)}.</span>}
+               {seekFailureMessage === null ? null : <span aria-label={seekFailureMessage} aria-live="polite" className="visually-hidden" role="status">{seekFailureMessage}</span>}
               {hideAlternateMobileLyricsToggle ? null : <button aria-controls="bug-cesante-lyrics-surface" aria-expanded={lyricsExpanded} aria-label={lyricsExpanded ? "Ocultar letra" : "Mostrar letra"} className="bug-cesante-player-lyrics-toggle" onClick={() => setLyricsExpanded(!lyricsExpanded)} onFocus={() => { lastBottomControlRef.current = PLAYER_BOTTOM_CONTROL.LYRICS; }} ref={lyricsToggleRef} type="button">{lyricsExpanded ? "Ocultar letra" : "Letra"}</button>}
            </div> : null}
             {!hidden && lyricsExpanded && !isCoarseLayout && !isCoarseViewport() ? <div className="bug-cesante-player-lyrics" id="bug-cesante-lyrics-surface" onScroll={markManualLyricsScroll} ref={lyricsScrollRef}>

@@ -28,6 +28,17 @@ function AutoActivatingPlayerHarness() {
   return null;
 }
 
+function TransportHarness() {
+  const { isPlaying, releaseTransport } = useBugCesantePlayer();
+
+  return (
+    <>
+      <span data-testid="transport-state">{isPlaying ? "playing" : "paused"}</span>
+      <button onClick={releaseTransport} type="button">Liberar transporte</button>
+    </>
+  );
+}
+
 function MovementHarness() {
   const { activatePlayer, movementUnlocked, unlockPlayerMovement } = useBugCesantePlayer();
 
@@ -158,6 +169,85 @@ describe("BugCesantePlayerProvider", () => {
     expect(play).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Pausar canción" })).toBeInTheDocument();
     expect(window.sessionStorage.getItem(PRIMARY_PLAYER_STORAGE_KEY)).toBeNull();
+  });
+
+  it("pauses on alternate release and defensively pauses again on unmount", async () => {
+    const user = userEvent.setup();
+    const { pause, play } = stubSuccessfulPlayback();
+    const view = render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <TransportHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reproducir canción" }));
+    expect(play).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Liberar transporte" }));
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("transport-state")).toHaveTextContent("paused");
+
+    view.unmount();
+    const mounted = render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <TransportHarness />
+      </BugCesantePlayerProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Reproducir canción" }));
+    const pauseCountBeforeUnmount = pause.mock.calls.length;
+    mounted.unmount();
+    expect(pause.mock.calls.length).toBeGreaterThan(pauseCountBeforeUnmount);
+  });
+
+  it("pauses the current owner for a new provider and restores its own paused time", async () => {
+    const { pause, play } = stubSuccessfulPlayback();
+    const alternate = render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <TransportHarness />
+      </BugCesantePlayerProvider>,
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Reproducir canción" }));
+    expect(screen.getByTestId("transport-state")).toHaveTextContent("playing");
+
+    window.sessionStorage.setItem(PRIMARY_PLAYER_STORAGE_KEY, JSON.stringify({
+      activated: true,
+      currentTime: 8.5,
+      hidden: false,
+      lyricsExpanded: false,
+      paused: false,
+      position: null,
+    }));
+    render(
+      <BugCesantePlayerProvider>
+        <TransportHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    expect(pause).toHaveBeenCalled();
+    expect(play).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getAllByTestId("transport-state").at(-1)).toHaveTextContent("paused"));
+    expect(await screen.findByText("0:08 / 0:00", { exact: true })).toBeInTheDocument();
+    alternate.unmount();
+  });
+
+  it("pauses and persists without resuming when the document is hidden or paged away", async () => {
+    const user = userEvent.setup();
+    const { pause } = stubSuccessfulPlayback();
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Reproducir canción" }));
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    expect(pause).toHaveBeenCalled();
+    expect(JSON.parse(window.sessionStorage.getItem("kuroneko:bug-cesante-player:alternate") ?? "{}")).toMatchObject({ paused: true });
+    expect(screen.getByRole("button", { name: "Reproducir canción" })).toBeInTheDocument();
   });
 
   it("keeps an alternate stored playing state paused on mount", async () => {
@@ -347,6 +437,48 @@ describe("BugCesantePlayerProvider", () => {
     cue.focus();
     await user.keyboard(" ");
     expect(range).toHaveAttribute("data-seek-status", "pending");
+  });
+
+  it("clears a failed seek without persisting its target and announces the recovery", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      text: () => Promise.resolve("WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\nPrimera línea\n"),
+    })));
+    let actualTime = 0;
+
+    render(
+      <BugCesantePlayerProvider presentation={PLAYER_PRESENTATION.ALTERNATE}>
+        <PlayerHarness />
+      </BugCesantePlayerProvider>,
+    );
+
+    const audio = document.querySelector<HTMLAudioElement>(".bug-cesante-audio");
+    if (audio === null) throw new Error("Expected the shared audio element.");
+    Object.defineProperties(audio, {
+      buffered: { configurable: true, value: { end: () => 360, length: 1, start: () => 0 } },
+      currentTime: { configurable: true, get: () => actualTime, set: (value: number) => { actualTime = value; } },
+      duration: { configurable: true, value: 359.879979 },
+      readyState: { configurable: true, value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+      seekable: { configurable: true, value: { end: () => 359.879979, length: 1, start: () => 0 } },
+    });
+    fireEvent.loadedMetadata(audio);
+
+    await user.click(await screen.findByRole("button", { name: "Mostrar letra" }));
+    const cue = await screen.findByRole("button", { name: "Ir a 0:01: Primera línea" });
+    await user.click(cue);
+    expect(screen.getByRole("slider", { name: "Posición de la canción" })).toHaveAttribute("data-seek-status", "pending");
+
+    actualTime = 0;
+    fireEvent.seeked(audio);
+
+    await waitFor(() => {
+      expect(screen.getByRole("slider", { name: "Posición de la canción" })).toHaveAttribute("data-seek-status", "failed");
+      expect(screen.getByRole("status", { name: "No se pudo buscar esa posición; se mantuvo el tiempo confirmado." })).toBeInTheDocument();
+    });
+    expect(screen.getByText("0:00 / 5:59", { exact: true })).toBeInTheDocument();
+    expect(JSON.parse(window.sessionStorage.getItem("kuroneko:bug-cesante-player:alternate") ?? "{}")).toMatchObject({ currentTime: 0 });
+    expect(screen.getByRole("slider", { name: "Posición de la canción" })).not.toHaveAttribute("aria-valuetext", "Solicitando 0:01. Tiempo actual 0:00.");
   });
 
   it("clips lyric cues defensively to the confirmed media duration", () => {

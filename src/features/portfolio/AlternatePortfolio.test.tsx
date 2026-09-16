@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetSharedAudioElementForTests } from "@/shared/media/audio-controller";
 import {
   AlternatePortfolio,
   getAlternatePortfolioBadgeEntries,
@@ -11,6 +12,7 @@ import {
 } from "./AlternatePortfolio";
 
 describe("AlternatePortfolio", () => {
+  afterEach(() => resetSharedAudioElementForTests());
   afterEach(() => vi.restoreAllMocks());
 
   it("renders the 13 projects in source order with real destinations and honest statuses", async () => {
@@ -204,5 +206,26 @@ describe("AlternatePortfolio", () => {
     expect(css).toContain("box-shadow: inset 0 0 0 0.1875rem var(--focus);");
     expect(css).not.toContain('inline-size: min(38rem, calc(100vw - 2rem));');
     expect(css).not.toContain("-webkit-line-clamp");
+  });
+
+  it("pauses alternate transport synchronously before Volver navigates away", async () => {
+    const user = userEvent.setup();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function (this: HTMLMediaElement) {
+      Object.defineProperty(this, "paused", { configurable: true, value: false });
+      this.dispatchEvent(new Event("play"));
+      return Promise.resolve();
+    });
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) {
+      Object.defineProperty(this, "paused", { configurable: true, value: true });
+      this.dispatchEvent(new Event("pause"));
+    });
+
+    render(<AlternatePortfolio />);
+    await user.click(await screen.findByRole("button", { name: "Reproducir canción" }));
+    expect(play).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("link", { name: "Volver" }));
+
+    expect(pause).toHaveBeenCalled();
+    expect(document.querySelector<HTMLAudioElement>(".bug-cesante-audio")?.paused).toBe(true);
   });
 });

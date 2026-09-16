@@ -101,7 +101,7 @@ function clearAlternateAccess(event: MouseEvent<HTMLAnchorElement>) {
 }
 
 function PortfolioHeader() {
-  const { focusBottomPlayerControl, registerSocialFocus } =
+  const { focusBottomPlayerControl, registerSocialFocus, releaseTransport } =
     useBugCesantePlayer();
   const backRef = useRef<HTMLAnchorElement>(null);
   const linkedinRef = useRef<HTMLAnchorElement>(null);
@@ -134,6 +134,12 @@ function PortfolioHeader() {
     }
   }
 
+  function handleBackClick(event: MouseEvent<HTMLAnchorElement>) {
+    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    releaseTransport();
+    clearAlternateAccess(event);
+  }
+
   return (
     <header className="portfolio-alternate-header">
       <div className="portfolio-alternate-identity">
@@ -147,7 +153,7 @@ function PortfolioHeader() {
         className="portfolio-alternate-social"
         onKeyDown={handleSocialKeyDown}
       >
-        <Link className="portfolio-alternate-back" href="/" onClick={clearAlternateAccess} prefetch={false} ref={backRef}>
+        <Link className="portfolio-alternate-back" href="/" onClick={handleBackClick} prefetch={false} ref={backRef}>
           Volver
         </Link>
         <ExternalLink
