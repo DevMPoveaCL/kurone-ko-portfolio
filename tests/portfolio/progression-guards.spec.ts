@@ -277,7 +277,7 @@ test.describe("session progression guards", () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole("region", { name: "Sala principal de proyectos" })).toBeVisible();
     await page.goForward();
-    await expect(page).toHaveURL(/\/?view=showcase$/);
+     await expect(page).toHaveURL(/\/\?view=showcase$/u);
     await expect(page.getByRole("button", { name: /^Filtros/ })).toBeVisible({ timeout: 30_000 });
     await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem("kuroneko:session-progression:v1") ?? "{}").mainHallUnlocked)).toBe(true);
   });
