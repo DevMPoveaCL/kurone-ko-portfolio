@@ -301,6 +301,41 @@ describe("MainHall showcase integration", () => {
     expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("Proyecto activo: Kurone-ko Teacher"))).toBe(true);
   });
 
+  it("opens the first seal after a fresh showcase swipe without a compatibility click", async () => {
+    vi.stubGlobal("matchMedia", () => ({ addEventListener: vi.fn(), matches: false, removeEventListener: vi.fn() }));
+    vi.stubGlobal("CSS", { supports: vi.fn(() => true) });
+    render(<MainHall />);
+
+    const rail = await screen.findByRole("list", { name: "Proyectos filtrados" });
+    const activeItem = rail.querySelector("[data-active='true']");
+    const cardFace = activeItem?.querySelector(".project-card-face");
+    if (activeItem === null || cardFace === undefined || cardFace === null) throw new Error("Fresh showcase touch targets are unavailable.");
+    rail.setPointerCapture = vi.fn();
+
+    fireEvent.pointerDown(cardFace, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerMove(rail, { clientX: 140, clientY: 102, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerUp(rail, { clientX: 100, clientY: 102, pointerId: 1, pointerType: "touch" });
+    expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("Proyecto activo: Kurone-ko Timer"))).toBe(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const stackSeal = rail.querySelector<HTMLButtonElement>("[data-active='true'] .project-card-seal-stack");
+    if (stackSeal === null) throw new Error("Post-swipe seal target is unavailable.");
+    vi.spyOn(stackSeal, "getBoundingClientRect").mockReturnValue({
+      bottom: 150,
+      height: 100,
+      left: 100,
+      right: 300,
+      top: 50,
+      width: 200,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent.pointerDown(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerUp(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
   it("owns the first showcase reveal and does not replay it during navigation", async () => {
     const user = userEvent.setup();
     render(<MainHall />);

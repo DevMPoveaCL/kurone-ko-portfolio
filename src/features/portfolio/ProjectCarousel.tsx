@@ -7,6 +7,7 @@ import { createPointerAxisLock, isPointerGestureTarget, isPrimaryGesturePointer 
 import { getRingCssProperties } from "./ring-geometry";
 import type { ProjectEntry } from "./vault-types";
 import { withPublicPath } from "@/shared/routing/public-path";
+import { useTouchActivation } from "@/shared/a11y/touch-activation";
 
 export interface ProjectCarouselProps {
   activeProjectId: string | null;
@@ -80,6 +81,15 @@ export function ProjectCarousel({ activeProjectId, isProjectModalOpen = false, o
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [isFilterDialogOpen, isProjectModalOpen, onActiveProjectChange, projects, resolvedActiveIndex]);
 
+  function selectProject(index: number) {
+    if (isProjectModalOpen) return;
+    const project = projects[index];
+    if (project !== undefined) onActiveProjectChange(project.id);
+  }
+
+  const previousTouchActivation = useTouchActivation(() => selectProject(getWrappedIndex(resolvedActiveIndex - 1)));
+  const nextTouchActivation = useTouchActivation(() => selectProject(getWrappedIndex(resolvedActiveIndex + 1)));
+
   if (activeProject === undefined) {
     return (
       <section aria-label="Resultados de proyectos" className="project-carousel">
@@ -90,16 +100,10 @@ export function ProjectCarousel({ activeProjectId, isProjectModalOpen = false, o
     );
   }
 
-  function selectProject(index: number) {
-    if (isProjectModalOpen) return;
-    const project = projects[index];
-    if (project !== undefined) onActiveProjectChange(project.id);
-  }
-
   function onPointerDown(event: PointerEvent<HTMLOListElement>) {
     if (isProjectModalOpen) return;
-    if (isStaticLayout || !isPrimaryGesturePointer(event.nativeEvent) || !isPointerGestureTarget(event.target)) return;
-    suppressClickRef.current = false;
+    if (isStaticLayout || !isPrimaryGesturePointer(event.nativeEvent)) return;
+    if (!isPointerGestureTarget(event.target)) return;
     axisLockRef.current.start(event);
   }
 
@@ -132,9 +136,9 @@ export function ProjectCarousel({ activeProjectId, isProjectModalOpen = false, o
         Se muestran {projects.length} proyectos. {filters} Proyecto activo: {activeProject.name}.
       </p>
       <div aria-label="Navegación de proyectos" className="project-carousel-navigation">
-        <button aria-label="Proyecto anterior" className="project-carousel-arrow" data-arrow-direction="previous" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex - 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/left.webp")} width={48} /></button>
+        <button aria-label="Proyecto anterior" className="project-carousel-arrow" data-arrow-direction="previous" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex - 1))} type="button" {...previousTouchActivation}><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/left.webp")} width={48} /></button>
         <p aria-hidden="true">{String(resolvedActiveIndex + 1).padStart(2, "0")} / {String(projects.length).padStart(2, "0")}</p>
-        <button aria-label="Proyecto siguiente" className="project-carousel-arrow" data-arrow-direction="next" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex + 1))} type="button"><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/right.webp")} width={48} /></button>
+        <button aria-label="Proyecto siguiente" className="project-carousel-arrow" data-arrow-direction="next" disabled={isProjectModalOpen} onClick={() => selectProject(getWrappedIndex(resolvedActiveIndex + 1))} type="button" {...nextTouchActivation}><Image alt="" aria-hidden="true" draggable={false} height={48} src={withPublicPath("/assets/icons/right.webp")} width={48} /></button>
       </div>
       <p className="visually-hidden" id="project-carousel-gesture-hint">También puedes arrastrar horizontalmente el proyecto activo para navegar; los controles siguen disponibles.</p>
       <ol
@@ -146,9 +150,10 @@ export function ProjectCarousel({ activeProjectId, isProjectModalOpen = false, o
         data-static-layout={isStaticLayout}
         onClickCapture={(event) => {
           if (!suppressClickRef.current) return;
+          suppressClickRef.current = false;
+          if (!isPointerGestureTarget(event.target)) return;
           event.preventDefault();
           event.stopPropagation();
-          suppressClickRef.current = false;
         }}
         onGotPointerCapture={(event) => {
           if (event.target === event.currentTarget) railCapturePointerIdRef.current = event.pointerId;

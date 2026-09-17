@@ -49,12 +49,16 @@ describe("pointer axis lock", () => {
   });
 
   it("accepts only primary mouse, pen, and touch pointers outside controls", () => {
-    const { getByRole } = render(createElement("button", { type: "button" }, "Control"));
+    const { getByRole, getByText } = render(createElement("div", null,
+      createElement("button", { type: "button" }, "Control"),
+      createElement("div", { "data-gesture-exclude": "true" }, "Excluded"),
+    ));
 
     expect(isPrimaryGesturePointer({ button: 0, isPrimary: true, pointerType: "touch" } as PointerEvent)).toBe(true);
     expect(isPrimaryGesturePointer({ button: 2, isPrimary: true, pointerType: "mouse" } as PointerEvent)).toBe(false);
     expect(isPrimaryGesturePointer({ button: 0, isPrimary: false, pointerType: "pen" } as PointerEvent)).toBe(false);
     expect(isPointerGestureTarget(getByRole("button", { name: "Control" }))).toBe(false);
+    expect(isPointerGestureTarget(getByText("Excluded"))).toBe(false);
   });
 
   it("keeps axis lock through descendant capture loss before the rail captures and commits one step", () => {
@@ -83,6 +87,142 @@ describe("pointer axis lock", () => {
     const activeItem = rail.querySelector("[data-active='true']");
     if (activeItem === null) throw new Error("Expected active item.");
     expect(within(activeItem as HTMLElement).getByRole("button", { name: /Ver historia de/ })).toBeVisible();
+  });
+
+  it("opens the first deliberate seal touch after a swipe without a compatibility click", () => {
+    const projects = filterProjects(PROJECTS, []).slice(0, 2);
+    const activeProject = projects[0];
+    if (activeProject === undefined) throw new Error("Expected eligible project.");
+
+    vi.stubGlobal("matchMedia", () => ({ addEventListener: vi.fn(), matches: false, removeEventListener: vi.fn() }));
+    vi.stubGlobal("CSS", { supports: vi.fn(() => true) });
+    const onActiveProjectChange = vi.fn();
+    render(createElement(ProjectCarousel, { activeProjectId: activeProject.id, onActiveProjectChange, projects }));
+
+    const rail = screen.getByRole("list", { name: "Proyectos filtrados" }) as HTMLOListElement;
+    rail.setPointerCapture = vi.fn();
+    const cardFace = rail.querySelector(".project-card-face");
+    const activeItem = rail.querySelector("[data-active='true']");
+    if (cardFace === null || activeItem === null) throw new Error("Expected an active project card.");
+    const stackSeal = within(activeItem as HTMLElement).getByRole("button", { name: /Ver stack de/ });
+    vi.spyOn(stackSeal, "getBoundingClientRect").mockReturnValue({
+      bottom: 150,
+      height: 100,
+      left: 100,
+      right: 300,
+      top: 50,
+      width: 200,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.pointerDown(cardFace, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerMove(rail, { clientX: 140, clientY: 102, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerUp(rail, { clientX: 100, clientY: 102, pointerId: 1, pointerType: "touch" });
+    expect(onActiveProjectChange).toHaveBeenCalledOnce();
+
+    fireEvent.pointerDown(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerUp(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("suppresses the compatibility click paired with a seal activation", () => {
+    const projects = filterProjects(PROJECTS, []).slice(0, 2);
+    const activeProject = projects[0];
+    if (activeProject === undefined) throw new Error("Expected eligible project.");
+
+    vi.stubGlobal("matchMedia", () => ({ addEventListener: vi.fn(), matches: false, removeEventListener: vi.fn() }));
+    vi.stubGlobal("CSS", { supports: vi.fn(() => true) });
+    render(createElement(ProjectCarousel, { activeProjectId: activeProject.id, onActiveProjectChange: vi.fn(), projects }));
+
+    const rail = screen.getByRole("list", { name: "Proyectos filtrados" }) as HTMLOListElement;
+    rail.setPointerCapture = vi.fn();
+    const cardFace = rail.querySelector(".project-card-face");
+    const activeItem = rail.querySelector("[data-active='true']");
+    if (cardFace === null || activeItem === null) throw new Error("Expected an active project card.");
+    const stackSeal = within(activeItem as HTMLElement).getByRole("button", { name: /Ver stack de/ });
+    vi.spyOn(stackSeal, "getBoundingClientRect").mockReturnValue({
+      bottom: 150,
+      height: 100,
+      left: 100,
+      right: 300,
+      top: 50,
+      width: 200,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.pointerDown(cardFace, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerMove(rail, { clientX: 140, clientY: 102, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerUp(rail, { clientX: 100, clientY: 102, pointerId: 1, pointerType: "touch" });
+
+    const compatibilityClick = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    cardFace.dispatchEvent(compatibilityClick);
+    expect(compatibilityClick.defaultPrevented).toBe(true);
+
+    fireEvent.pointerDown(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerUp(stackSeal, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    const interactiveClick = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    stackSeal.dispatchEvent(interactiveClick);
+
+    expect(interactiveClick.defaultPrevented).toBe(true);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("keeps arrow activation single and does not arm suppression for vertical movement", () => {
+    const projects = filterProjects(PROJECTS, []).slice(0, 2);
+    const activeProject = projects[0];
+    if (activeProject === undefined) throw new Error("Expected eligible project.");
+
+    vi.stubGlobal("matchMedia", () => ({ addEventListener: vi.fn(), matches: false, removeEventListener: vi.fn() }));
+    vi.stubGlobal("CSS", { supports: vi.fn(() => true) });
+    const onActiveProjectChange = vi.fn();
+    render(createElement(ProjectCarousel, { activeProjectId: activeProject.id, onActiveProjectChange, projects }));
+
+    const rail = screen.getByRole("list", { name: "Proyectos filtrados" }) as HTMLOListElement;
+    rail.setPointerCapture = vi.fn();
+    const cardFace = rail.querySelector(".project-card-face");
+    if (cardFace === null) throw new Error("Expected a project card face.");
+    const nextButton = screen.getByRole("button", { name: "Proyecto siguiente" });
+    vi.spyOn(nextButton, "getBoundingClientRect").mockReturnValue({
+      bottom: 150,
+      height: 100,
+      left: 100,
+      right: 300,
+      top: 50,
+      width: 200,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.pointerDown(cardFace, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerMove(rail, { clientX: 140, clientY: 102, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerUp(rail, { clientX: 100, clientY: 102, pointerId: 1, pointerType: "touch" });
+    fireEvent.pointerDown(nextButton, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 3, pointerType: "touch" });
+    fireEvent.pointerUp(nextButton, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 3, pointerType: "touch" });
+    const compatibilityClick = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    nextButton.dispatchEvent(compatibilityClick);
+
+    expect(onActiveProjectChange).toHaveBeenCalledTimes(2);
+    expect(compatibilityClick.defaultPrevented).toBe(true);
+
+    const verticalChange = vi.fn();
+    render(createElement(ProjectCarousel, { activeProjectId: activeProject.id, onActiveProjectChange: verticalChange, projects }));
+    const verticalRail = screen.getAllByRole("list", { name: "Proyectos filtrados" })[1] as HTMLOListElement;
+    verticalRail.setPointerCapture = vi.fn();
+    const verticalCardFace = verticalRail.querySelector(".project-card-face");
+    if (verticalCardFace === null) throw new Error("Expected a vertical gesture card face.");
+    fireEvent.pointerDown(verticalCardFace, { button: 0, clientX: 200, clientY: 100, isPrimary: true, pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerMove(verticalRail, { clientX: 204, clientY: 140, pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerUp(verticalRail, { clientX: 204, clientY: 180, pointerId: 2, pointerType: "touch" });
+    const verticalClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+    verticalCardFace.dispatchEvent(verticalClick);
+
+    expect(verticalClick.defaultPrevented).toBe(false);
+    expect(verticalChange).not.toHaveBeenCalled();
   });
 
   it("preserves vertical scroll, cancellation cleanup, static fallback, and visible controls", () => {

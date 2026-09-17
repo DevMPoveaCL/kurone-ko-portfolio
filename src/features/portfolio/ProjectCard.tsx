@@ -31,6 +31,7 @@ import {
 } from "./project-taxonomy";
 import { useProgressivePreviewVideo } from "./preview-policy";
 import { withPublicPath } from "@/shared/routing/public-path";
+import { useTouchActivation } from "@/shared/a11y/touch-activation";
 import {
   PROJECT_CARD_FRAME,
   PROJECT_CARD_PRESENTATION,
@@ -352,6 +353,13 @@ export function ProjectCard({
 
   const openUnlockDialogEvent = useEffectEvent(openUnlockDialog);
 
+  const stackTouchActivation = useTouchActivation(() => isLocked
+    ? openUnlockDialog(stackSealRef)
+    : openProjectModal(PROJECT_MODAL.STACK, stackSealRef));
+  const infoTouchActivation = useTouchActivation(() => isLocked
+    ? openUnlockDialog(infoSealRef)
+    : openProjectModal(PROJECT_MODAL.INFO, infoSealRef));
+
   useLayoutEffect(() => {
     const target = isInfoOpen ? infoPanelRef.current : infoControlRef.current;
     target?.focus({ preventScroll: true });
@@ -653,6 +661,7 @@ export function ProjectCard({
               onClick={() => isLocked ? openUnlockDialog(stackSealRef) : openProjectModal(PROJECT_MODAL.STACK, stackSealRef)}
               ref={stackSealRef}
               type="button"
+              {...stackTouchActivation}
             >
               <Image
                 alt=""
@@ -674,6 +683,7 @@ export function ProjectCard({
               onClick={() => isLocked ? openUnlockDialog(infoSealRef) : openProjectModal(PROJECT_MODAL.INFO, infoSealRef)}
               ref={infoSealRef}
               type="button"
+              {...infoTouchActivation}
             >
               <Image
                 alt=""

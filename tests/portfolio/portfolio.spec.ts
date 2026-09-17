@@ -6390,6 +6390,12 @@ test.describe("Immersive accessible portfolio", () => {
           .toBe("Kurone-ko Timer");
         await expect(swipeRail.locator("[aria-current='true']")).toHaveCount(1);
         await expect(swipePage.locator("dialog[open]")).toHaveCount(0);
+        const postSwipeSeal = swipePage.locator(
+          '.project-showcase-item[data-active="true"] .project-card-seal-stack',
+        );
+        await expect(postSwipeSeal).toBeVisible();
+        await swipePortfolio.tapWithTouch(postSwipeSeal);
+        await expect(swipePage.locator("dialog[open]")).toHaveCount(1);
       } finally {
         await context.close();
       }
