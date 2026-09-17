@@ -81,17 +81,16 @@ function getShowcaseUrl(selectedIds: readonly FilterId[], projectId: string | nu
 }
 
 interface ShowcaseMotionState {
-  isInteractive: boolean;
   isRevealing: boolean;
 }
 
 function getInitialShowcaseMotionState(): ShowcaseMotionState {
-  if (typeof window === "undefined") return { isInteractive: false, isRevealing: true };
+  if (typeof window === "undefined") return { isRevealing: true };
 
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
   const transitionsSupported = typeof window.CSS?.supports === "function";
   const settleImmediately = reducedMotion || !transitionsSupported;
-  return { isInteractive: settleImmediately, isRevealing: !settleImmediately };
+  return { isRevealing: !settleImmediately };
 }
 
 export function ProjectShowcase({
@@ -124,7 +123,7 @@ export function ProjectShowcase({
   const isProjectModalOpen = controlledProjectModalOpen ?? localProjectModalOpen;
   const handleProjectModalChange = onProjectModalChange ?? setLocalProjectModalOpen;
   const { activatePlayer, movementUnlocked, unlockPlayerMovement } = useBugCesantePlayer();
-  const { isInteractive: isShowcaseInteractive, isRevealing: isShowcaseRevealing } = showcaseMotion;
+  const { isRevealing: isShowcaseRevealing } = showcaseMotion;
   const unlockedChallengeIdsRef = useRef(unlockedChallengeIds);
   const [unlockDialogPhase, setUnlockDialogPhase] = useState<UnlockDialogPhase>(UNLOCK_DIALOG_PHASE.IDLE);
   const unlockDialogPhaseRef = useRef(unlockDialogPhase);
@@ -192,15 +191,11 @@ export function ProjectShowcase({
   useEffect(() => {
     if (!isShowcaseRevealing) return;
 
-    let interactiveTimer: number | undefined;
     const frame = window.requestAnimationFrame(() => {
-      setShowcaseMotion((previous) => ({ ...previous, isRevealing: false }));
-      // Keep the accessibility gate bounded if a browser skips transitionend.
-      interactiveTimer = window.setTimeout(() => setShowcaseMotion((previous) => ({ ...previous, isInteractive: true })), 500);
+      setShowcaseMotion({ isRevealing: false });
     });
     return () => {
       window.cancelAnimationFrame(frame);
-      if (interactiveTimer !== undefined) window.clearTimeout(interactiveTimer);
     };
   }, [isShowcaseRevealing]);
 
@@ -425,8 +420,6 @@ export function ProjectShowcase({
     <div
       className="project-showcase"
       data-showcase-reveal={isShowcaseRevealing ? "entering" : "settled"}
-      inert={!isShowcaseInteractive && detailProject === null ? true : undefined}
-      onTransitionEnd={() => setShowcaseMotion((previous) => ({ ...previous, isInteractive: true }))}
       suppressHydrationWarning
     >
       {isVoidActive && movementUnlocked ? <PlayerMovementLegend className="professional-void-movement-legend" /> : null}

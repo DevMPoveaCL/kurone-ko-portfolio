@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -650,7 +650,7 @@ describe("VaultShell", () => {
     });
   });
 
-  it("advances the mobile intro from a tap and keeps the handoff from selecting a seal", async () => {
+  it("opens the first seal after one mobile swipe and blocks only the swipe release click", async () => {
     mockViewport(390, 844);
     mockMedia({ reducedMotion: false, mobile: true });
 
@@ -658,11 +658,20 @@ describe("VaultShell", () => {
 
     await screen.findByRole("status", { name: "Desliza hacia arriba para abrir la bóveda o hacia abajo para revertir la apertura." });
     const shell = await screen.findByRole("region", { name: "¿Qué hay detrás?" });
-    fireEvent.pointerDown(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 400 });
-    fireEvent.pointerMove(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 350 });
-    fireEvent.pointerUp(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 350 });
+    fireEvent.pointerDown(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 700 });
+    fireEvent.pointerMove(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 20 });
 
-    expect(await screen.findByText("Apertura 18%")).toBeInTheDocument();
+    const pointerUp = createEvent.pointerUp(shell, { pointerId: 1, pointerType: "touch", clientX: 120, clientY: 20 });
+    shell.dispatchEvent(pointerUp);
+
+    expect(pointerUp.defaultPrevented).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Sello 1 — El Ojo" })).not.toBeInTheDocument();
+
+    const firstSeal = await screen.findByRole("button", { name: /Sello 1 — El Ojo.*Bloqueado/ });
+    fireEvent.pointerDown(firstSeal, { pointerId: 2, pointerType: "touch", clientX: 120, clientY: 120 });
+    fireEvent.pointerUp(firstSeal, { pointerId: 2, pointerType: "touch", clientX: 120, clientY: 120 });
+    fireEvent.click(firstSeal);
+    expect(screen.getAllByRole("dialog", { name: "Sello 1 — El Ojo" })).toHaveLength(1);
   });
 
   it("unlocks each unique seal once while preserving unlocked state", async () => {

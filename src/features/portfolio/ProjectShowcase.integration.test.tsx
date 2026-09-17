@@ -8,7 +8,10 @@ vi.mock("../../shared/media/image-readiness", () => ({
 }));
 
 import { MainHall } from "./MainHall";
+import { BugCesantePlayerProvider } from "./BugCesantePlayer";
 import { PROJECT_UNLOCK_CHALLENGE_ID, PROJECT_UNLOCK_SUCCESS } from "./hidden-project-unlock";
+import { PROJECTS } from "./project-data";
+import { ProjectShowcase } from "./ProjectShowcase";
 import {
   createInitialSessionProgression,
   markIntroCompleted,
@@ -320,6 +323,27 @@ describe("MainHall showcase integration", () => {
 
     await user.click(screen.getByRole("button", { name: "Proyecto siguiente" }));
     expect(showcase).toHaveAttribute("data-showcase-reveal", "settled");
+  });
+
+  it("opens a visible seal before the decorative reveal settles", async () => {
+    vi.stubGlobal("CSS", { supports: () => true });
+    const user = userEvent.setup();
+    render(
+      <BugCesantePlayerProvider>
+        <ProjectShowcase projects={PROJECTS} />
+      </BugCesantePlayerProvider>,
+    );
+
+    const showcase = await screen.findByRole("list", { name: "Proyectos filtrados" });
+    const owner = showcase.closest<HTMLElement>(".project-showcase");
+    const seal = screen.getByRole("button", { name: "Ver stack de Software Engineering Playbook" });
+    if (owner === null) throw new Error("Showcase owner is unavailable.");
+
+    expect(owner).toHaveAttribute("data-showcase-reveal", "entering");
+    expect(owner).not.toHaveAttribute("inert");
+    await user.click(seal);
+
+    expect(screen.getAllByRole("dialog", { name: "ARQUITECTURA" })).toHaveLength(1);
   });
 
   it("settles the first reveal immediately for reduced motion", async () => {
