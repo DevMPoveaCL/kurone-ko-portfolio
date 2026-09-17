@@ -57,6 +57,12 @@ export class PortfolioPage extends BasePage {
     await expect(this.page.getByRole("list", { name: "Proyectos filtrados" })).toBeVisible();
   }
 
+  async tapWithTouch(locator: Locator): Promise<void> {
+    const box = await locator.boundingBox();
+    if (box === null) throw new Error("Expected touch target to have a bounding box.");
+    await this.page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  }
+
   async gotoAlternatePortfolio(): Promise<void> {
     await this.seedValidProgression({ alternateResidency: "active" });
     await this.goto("/portfolio");

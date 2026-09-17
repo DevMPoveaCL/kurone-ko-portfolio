@@ -6319,6 +6319,84 @@ test.describe("Immersive accessible portfolio", () => {
   );
 
   test(
+    "activates showcase controls on their first physical-like touch",
+    { tag: ["@critical", "@e2e", "@showcase", "@SHOWCASE-E2E-010"] },
+    async ({ browser }) => {
+      test.setTimeout(60_000);
+      const context = await browser.newContext({
+        hasTouch: true,
+        isMobile: true,
+        viewport: { width: 390, height: 844 },
+      });
+
+      try {
+        const sealPage = await context.newPage();
+        await sealPage.emulateMedia({ reducedMotion: "reduce" });
+        const sealPortfolio = new PortfolioPage(sealPage);
+        await sealPortfolio.gotoShowcase();
+        const activeCard = sealPage.locator(
+          '.project-showcase-item[data-active="true"] .project-card',
+        );
+        const stackSeal = activeCard.getByRole("button", { name: /Ver stack de/ });
+        await expect(stackSeal).toBeVisible();
+
+        await sealPortfolio.tapWithTouch(stackSeal);
+        const sealDialogs = sealPage.locator("dialog[open]");
+        await expect(sealDialogs).toHaveCount(1);
+        await expect(sealPage.getByRole("dialog")).toHaveCount(1);
+        await sealPage.keyboard.press("Escape");
+        await expect(sealDialogs).toHaveCount(0);
+
+        const arrowPage = await context.newPage();
+        await arrowPage.emulateMedia({ reducedMotion: "reduce" });
+        const arrowPortfolio = new PortfolioPage(arrowPage);
+        await arrowPortfolio.gotoShowcase();
+        const arrowRail = arrowPage.getByRole("list", { name: "Proyectos filtrados" });
+        const activeTitle = arrowRail.locator(
+          '.project-showcase-item[data-active="true"] .project-card-title',
+        );
+        await expect(activeTitle).toHaveText("Software Engineering Playbook");
+        await arrowPortfolio.tapWithTouch(
+          arrowPage.getByRole("button", { name: "Proyecto siguiente" }),
+        );
+        await expect
+          .poll(() => activeTitle.textContent())
+          .toBe("Kurone-ko Timer");
+        await expect(arrowRail.locator("[aria-current='true']")).toHaveCount(1);
+        await expect(arrowPage.locator("dialog[open]")).toHaveCount(0);
+
+        const swipePage = await context.newPage();
+        await swipePage.emulateMedia({ reducedMotion: "reduce" });
+        const swipePortfolio = new PortfolioPage(swipePage);
+        await swipePortfolio.gotoShowcase();
+        const swipeRail = swipePage.getByRole("list", { name: "Proyectos filtrados" });
+        const swipeTitle = swipeRail.locator(
+          '.project-showcase-item[data-active="true"] .project-card-title',
+        );
+        await expect(swipeTitle).toHaveText("Software Engineering Playbook");
+        const railBox = await swipeRail.boundingBox();
+        if (railBox === null) throw new Error("Expected carousel gesture surface.");
+        const cdp = await context.newCDPSession(swipePage);
+        await dispatchTouchDrag(
+          cdp,
+          1,
+          railBox.x + railBox.width / 2,
+          railBox.y + 40,
+          -64,
+          2,
+        );
+        await expect
+          .poll(() => swipeTitle.textContent())
+          .toBe("Kurone-ko Timer");
+        await expect(swipeRail.locator("[aria-current='true']")).toHaveCount(1);
+        await expect(swipePage.locator("dialog[open]")).toHaveCount(0);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  test(
     "keeps package security and automation exposure constraints visible",
     { tag: ["@medium", "@e2e", "@security", "@PORTFOLIO-E2E-004"] },
     async ({ page }) => {
