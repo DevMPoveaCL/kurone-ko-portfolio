@@ -385,7 +385,11 @@ export function ProjectShowcase({
 
   function unlockChallenge(challengeId: string) {
     if (!PROJECT_UNLOCK_CHALLENGES.some((challenge) => challenge.id === challengeId)) return;
-    if (unlockedChallengeIdsRef.current.includes(challengeId)) return;
+    if (unlockedChallengeIdsRef.current.includes(challengeId)) {
+      restoreContentFocus();
+      transitionUnlockDialogPhase(UNLOCK_DIALOG_PHASE.IDLE);
+      return;
+    }
 
     const nextProgression = unlockHiddenChallenge(
       progressionRef.current,
@@ -434,7 +438,7 @@ export function ProjectShowcase({
         <ExternalNavigationProvider>
           {detailProject === null ? <>
             <h2 className="visually-hidden project-showcase-heading" ref={headingRef} tabIndex={-1}>Proyectos en la sala principal</h2>
-            <ProjectFilterControls isInteractionBlocked={isProjectModalOpen || isUnlockSuccessOpen} isOpen={isFilterDialogOpen} onApply={applyFilters} onChallengeSolved={unlockChallenge} onClear={clearFilters} onDialogClosed={acknowledgeFilterDialogClosed} onOpenChange={handleFilterDialogOpenChange} onRequestContentFocus={restoreContentFocus} projects={eligibleProjects} showLegend={!isVoidActive} showMovementLegend={movementUnlocked} selectedIds={selectedIds} unlockedChallengeIds={unlockedChallengeIds} />
+            <ProjectFilterControls isInteractionBlocked={isProjectModalOpen || isUnlockSuccessOpen} isOpen={isFilterDialogOpen} onApply={applyFilters} onChallengeSolved={unlockChallenge} onClear={clearFilters} onDialogClosed={acknowledgeFilterDialogClosed} onOpenChange={handleFilterDialogOpenChange} onRequestContentFocus={restoreContentFocus} projects={eligibleProjects} showLegend={!isVoidActive} showMovementLegend={movementUnlocked} selectedIds={selectedIds} />
             {isVoidActive ? <ProfessionalVoidState socialFocusRef={voidSocialFocusRef} /> : <ProjectCarousel activeProjectId={activeProjectId} focusTargetRef={carouselFocusTargetRef} isFilterDialogOpen={isFilterDialogOpen} isProjectModalOpen={isProjectModalOpen || isUnlockSuccessOpen} onActiveProjectChange={(projectId) => { if (!isProjectModalOpen && !isUnlockSuccessOpen) dispatch({ type: SHOWCASE_ACTION.PROJECT_SELECTED, projectId, projectIds: filteredProjects.map((project) => project.id) }); }} onClearFilters={clearFilters} projects={filteredProjects} selectedFilterLabels={selectedIds.map(getFilterLabel)} unlockedChallengeIds={unlockedChallengeIds} onProjectModalChange={handleProjectModalChange} />}
             {isVoidActive ? null : <div aria-hidden="true" className="project-showcase-identity">
               <p>PROYECTOS</p>

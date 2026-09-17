@@ -27,6 +27,7 @@ export class PortfolioPage extends BasePage {
   readonly alternateEntry: Locator;
 
   private readonly desktopIntroGuidance = "Puedes navegar con scroll, flecha izquierda o flecha derecha.";
+  private readonly mobileIntroGuidance = "Desliza hacia arriba para abrir la bóveda o hacia abajo para revertir la apertura.";
   private readonly desktopSealGuidance = "Recorre los sellos con las flechas izquierda y derecha, o haz click sobre ellos.";
   private readonly mobileSealGuidance = "Pulsa sobre los sellos para activarlos.";
 
@@ -347,7 +348,7 @@ export class PortfolioPage extends BasePage {
   }
 
   async unlockMobileVaultForCinematic(): Promise<void> {
-    await expect(this.status).toHaveAccessibleName("Toca para abrir la bóveda.");
+    await this.expectMobileIntroGuidance();
     const curtain = this.page.locator(".vault-curtain-opening");
     await expect.poll(async () => {
       if (await curtain.count() === 0) return true;
@@ -412,6 +413,10 @@ export class PortfolioPage extends BasePage {
 
   async expectDesktopScrollGuidance(): Promise<void> {
     await expect(this.status).toHaveAccessibleName(this.desktopIntroGuidance, { timeout: 30_000 });
+  }
+
+  async expectMobileIntroGuidance(): Promise<void> {
+    await expect(this.status).toHaveAccessibleName(this.mobileIntroGuidance, { timeout: 30_000 });
   }
 
   async expectMainHallFocused(timeout = 5_000): Promise<void> {

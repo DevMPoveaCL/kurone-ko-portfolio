@@ -23,7 +23,6 @@ export interface ProjectFilterControlsProps {
   showLegend?: boolean;
   showMovementLegend?: boolean;
   selectedIds: readonly FilterId[];
-  unlockedChallengeIds?: readonly string[];
 }
 
 function normalizeSearchValue(value: string) {
@@ -85,7 +84,7 @@ function ProjectShowcaseLegend() {
   );
 }
 
-export function ProjectFilterControls({ isInteractionBlocked = false, isOpen: controlledIsOpen, onApply, onChallengeSolved, onClear, onDialogClosed, onOpenChange = () => undefined, onRequestContentFocus = () => undefined, projects, showLegend = true, showMovementLegend = false, selectedIds, unlockedChallengeIds = [] }: ProjectFilterControlsProps) {
+export function ProjectFilterControls({ isInteractionBlocked = false, isOpen: controlledIsOpen, onApply, onChallengeSolved, onClear, onDialogClosed, onOpenChange = () => undefined, onRequestContentFocus = () => undefined, projects, showLegend = true, showMovementLegend = false, selectedIds }: ProjectFilterControlsProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const dismissRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -134,6 +133,7 @@ export function ProjectFilterControls({ isInteractionBlocked = false, isOpen: co
 
   function closeDialog({ restoreContentFocus = true, restoreHistory = true }: { restoreContentFocus?: boolean; restoreHistory?: boolean } = {}) {
     dialogRef.current?.close();
+    setDraftIds(selectedIds);
     setQuery("");
     setDialogOpen(false);
     if (restoreContentFocus) onRequestContentFocus();
@@ -147,7 +147,6 @@ export function ProjectFilterControls({ isInteractionBlocked = false, isOpen: co
     setQuery(nextQuery);
     if (
       unlockChallenge !== undefined &&
-      !unlockedChallengeIds.includes(unlockChallenge.id) &&
       handledUnlockChallengeRef.current !== unlockChallenge.id &&
       isAcceptedUnlockAnswer(unlockChallenge, nextQuery)
     ) {

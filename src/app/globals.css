@@ -7683,7 +7683,7 @@ h2 {
   }
 }
 
-@media (max-width: 48rem), (pointer: coarse) {
+@media (max-width: 48rem) {
   .mobile-control-safe-zone[data-presentation="alternate"] {
     position: fixed;
     z-index: 30;
@@ -9971,7 +9971,7 @@ h2 {
   background: var(--player-surface);
 }
 
-@media (max-width: 48rem), (pointer: coarse) {
+@media (max-width: 48rem) {
   :root {
     --portfolio-alternate-player-reserved-top: 4rem;
   }
@@ -10028,6 +10028,10 @@ h2 {
 }
 
 @media (min-width: 48.0625rem) {
+  .mobile-control-safe-zone[data-presentation="alternate"] {
+    display: none;
+  }
+
   .portfolio-alternate-header {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:

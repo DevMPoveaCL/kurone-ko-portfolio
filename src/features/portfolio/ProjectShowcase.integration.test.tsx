@@ -141,7 +141,47 @@ describe("MainHall showcase integration", () => {
     expect(unlockedPosCard).toHaveAccessibleDescription(/Proyecto oculto y desbloqueado/i);
      await waitFor(() => expect(document.activeElement).toHaveAttribute("data-carousel-focus-target", "true"));
       expect(document.activeElement).not.toHaveClass("project-card");
-   });
+    });
+
+  it("consumes a repeated accepted alias without reopening success or trapping showcase focus", async () => {
+    const user = userEvent.setup();
+    render(<MainHall />);
+
+    await user.click(await screen.findByRole("button", { name: /Filtros/ }));
+    await user.type(screen.getByRole("searchbox", { name: "Buscar tecnología" }), "ben");
+    const successDialog = await screen.findByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" });
+    await user.click(screen.getByRole("button", { name: "CONTINUAR" }));
+    await waitFor(() => expect(successDialog).not.toBeInTheDocument());
+
+    const carousel = document.querySelector<HTMLElement>(".project-carousel[data-carousel-focus-target='true']");
+    const interactionSurface = document.querySelector<HTMLElement>(".project-showcase-interaction-surface");
+    if (carousel === null || interactionSurface === null) throw new Error("Showcase focus probes are unavailable.");
+
+    await user.click(screen.getByRole("button", { name: /Filtros/ }));
+    const repeatedSearch = screen.getByRole("searchbox", { name: "Buscar tecnología" });
+    await user.type(repeatedSearch, "narrador");
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ })).not.toBeInTheDocument());
+    expect(repeatedSearch).toHaveValue("");
+    expect(screen.queryByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" })).not.toBeInTheDocument();
+    expect(document.querySelectorAll("dialog[open]")).toHaveLength(0);
+    expect(interactionSurface).not.toHaveAttribute("inert");
+    expect(interactionSurface).not.toHaveAttribute("aria-hidden");
+    await waitFor(() => expect(carousel).toHaveFocus());
+
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("Proyecto activo: Kurone-ko Timer"))).toBe(true);
+    await user.keyboard("s");
+    const stackDialog = await screen.findByRole("dialog", { name: "FOCO SIN DISTRACCIONES" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(stackDialog).not.toBeInTheDocument());
+
+    await user.keyboard("i");
+    const infoDialog = await screen.findByRole("dialog", { name: "KURONE-KO TIMER" });
+    await user.click(screen.getByRole("button", { name: /Cerrar información de/ }));
+    await waitFor(() => expect(infoDialog).not.toBeInTheDocument());
+    expect(carousel).toHaveFocus();
+  });
 
   it("suppresses stray outside Space but natively activates focused CONTINUAR once", async () => {
     const user = userEvent.setup();

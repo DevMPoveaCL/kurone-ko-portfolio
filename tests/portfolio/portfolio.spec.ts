@@ -883,12 +883,12 @@ test.describe("Immersive accessible portfolio", () => {
         { height: 1600, width: 1600, safeZoneActive: false },
       ];
       const coarseViewports = [
-        { height: 500, width: 769, safeZoneActive: true },
-        { height: 800, width: 853, safeZoneActive: true },
-        { height: 1280, width: 912, safeZoneActive: true },
-        { height: 1376, width: 960, safeZoneActive: true },
-        { height: 1440, width: 1032, safeZoneActive: true },
-        { height: 1600, width: 1280, safeZoneActive: true },
+        { height: 500, width: 769, safeZoneActive: false },
+        { height: 800, width: 853, safeZoneActive: false },
+        { height: 1280, width: 912, safeZoneActive: false },
+        { height: 1376, width: 960, safeZoneActive: false },
+        { height: 1440, width: 1032, safeZoneActive: false },
+        { height: 1600, width: 1280, safeZoneActive: false },
       ];
 
       const readLayoutMetrics = (page: import("@playwright/test").Page) => page.evaluate(() => {
@@ -1191,6 +1191,102 @@ test.describe("Immersive accessible portfolio", () => {
       expect(await page.locator(".portfolio-alternate-card").count()).toBe(13);
       expect(await page.locator(".portfolio-alternate-ticker").textContent()).toBe(contentSnapshot.ticker);
       expect(await page.locator(".portfolio-alternate-card h2").allTextContents()).toEqual(contentSnapshot.cards);
+    },
+  );
+
+  test(
+    "proves the complete alternate header stays visible across fixed and header-owned modes",
+    { tag: ["@critical", "@e2e", "@portfolio", "@PORTFOLIO-ALTERNATE-HEADER-VISUAL-E2E-003"] },
+    async ({ browser }) => {
+      test.setTimeout(120_000);
+      const desktopViewports = [
+        { height: 873, label: "1244x873", width: 1244 },
+        { height: 873, label: "769x873", width: 769 },
+        { height: 873, label: "912x873", width: 912 },
+        { height: 873, label: "1032x873", width: 1032 },
+        { height: 873, label: "1280x873", width: 1280 },
+        { height: 873, label: "1600x873", width: 1600 },
+      ];
+
+      for (const pointerMode of ["fine", "coarse"] as const) {
+        const context = await browser.newContext({
+          hasTouch: pointerMode === "coarse",
+          viewport: { height: desktopViewports[0]!.height, width: desktopViewports[0]!.width },
+        });
+        const page = await context.newPage();
+
+        try {
+          await new PortfolioPage(page).gotoAlternatePortfolio();
+          for (const viewport of desktopViewports) {
+            await page.setViewportSize(viewport);
+            const evidence = await page.evaluate(() => {
+              const selectorMap = {
+                back: ".portfolio-alternate-back",
+                github: ".portfolio-alternate-social a[href*='github.com']",
+                identity: ".portfolio-alternate-identity",
+                linkedin: ".portfolio-alternate-social a[href*='linkedin.com']",
+                player: ".bug-cesante-player[data-presentation='alternate']",
+                role: ".portfolio-alternate-role",
+                ticker: ".portfolio-alternate-ticker",
+              } as const;
+              const elements = Object.fromEntries(
+                Object.entries(selectorMap).map(([name, selector]) => [name, document.querySelector<HTMLElement>(selector)]),
+              ) as Record<keyof typeof selectorMap, HTMLElement | null>;
+              const safeZone = document.querySelector<HTMLElement>(".mobile-control-safe-zone[data-presentation='alternate']");
+              const header = document.querySelector<HTMLElement>(".portfolio-alternate-header");
+              if (Object.values(elements).some((element) => element === null) || safeZone === null || header === null) {
+                throw new Error("Complete alternate header evidence nodes are unavailable.");
+              }
+              const rect = (element: HTMLElement) => element.getBoundingClientRect();
+              const intersects = (left: DOMRect, right: DOMRect) => left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+              const targetRects = Object.values(elements).map((element) => rect(element!));
+              const safeZoneStyle = getComputedStyle(safeZone);
+              const safeZoneRect = rect(safeZone);
+              const headerRect = rect(header);
+              const tickerRect = rect(elements.ticker!);
+              const clipTop = Math.max(0, Math.floor(headerRect.top));
+              const clipBottom = Math.min(innerHeight, Math.ceil(tickerRect.bottom));
+              return {
+                clip: { height: Math.max(1, clipBottom - clipTop), top: clipTop, width: innerWidth },
+                requiredTargetsWithinClip: targetRects.every((target) => target.top >= clipTop - 1 && target.bottom <= clipBottom + 1),
+                safeZoneCoversRequiredTarget: safeZoneStyle.display !== "none" && targetRects.some((target) => intersects(target, safeZoneRect)),
+                safeZoneDisplay: safeZoneStyle.display,
+                targetRects: targetRects.map(({ bottom, left, right, top }) => ({ bottom, left, right, top })),
+              };
+            });
+
+            expect(evidence.requiredTargetsWithinClip, `${pointerMode} ${viewport.label} complete header clip`).toBe(true);
+            expect(evidence.safeZoneDisplay, `${pointerMode} ${viewport.label} alternate safe-zone`).toBe("none");
+            expect(evidence.safeZoneCoversRequiredTarget, `${pointerMode} ${viewport.label} opaque safe-zone coverage`).toBe(false);
+            expect(evidence.targetRects.every(({ bottom, left, right, top }) => left >= -1 && right <= viewport.width + 1 && top >= -1 && bottom <= viewport.height + 1), `${pointerMode} ${viewport.label} header target bounds`).toBe(true);
+
+            await test.info().attach(`alternate-header-${pointerMode}-${viewport.label}`, {
+              body: await page.screenshot({ animations: "disabled", clip: { height: evidence.clip.height, width: evidence.clip.width, x: 0, y: evidence.clip.top } }),
+              contentType: "image/png",
+            });
+          }
+
+          await page.setViewportSize({ height: 844, width: 390 });
+          const mobileEvidence = await page.evaluate(() => {
+            const player = document.querySelector<HTMLElement>(".bug-cesante-player[data-presentation='alternate']");
+            const safeZone = document.querySelector<HTMLElement>(".mobile-control-safe-zone[data-presentation='alternate']");
+            if (player === null || safeZone === null) throw new Error("Mobile alternate safe-zone evidence nodes are unavailable.");
+            return {
+              playerBottom: player.getBoundingClientRect().bottom,
+              playerPosition: getComputedStyle(player).position,
+              safeZoneBottom: safeZone.getBoundingClientRect().bottom,
+              safeZoneDisplay: getComputedStyle(safeZone).display,
+              safeZonePosition: getComputedStyle(safeZone).position,
+            };
+          });
+          expect(mobileEvidence.safeZoneDisplay).toBe("block");
+          expect(mobileEvidence.safeZonePosition).toBe("fixed");
+          expect(mobileEvidence.playerPosition).toBe("fixed");
+          expect(mobileEvidence.safeZoneBottom).toBeGreaterThanOrEqual(mobileEvidence.playerBottom - 1);
+        } finally {
+          await context.close();
+        }
+      }
     },
   );
 
@@ -2042,9 +2138,7 @@ test.describe("Immersive accessible portfolio", () => {
 
       await page.setViewportSize({ width: 390, height: 844 });
       await portfolio.gotoPortfolio();
-      await expect(
-        page.getByRole("status", { name: "Toca para abrir la bóveda." }),
-      ).toBeVisible({ timeout: 30_000 });
+      await portfolio.expectMobileIntroGuidance();
       await portfolio.shell.focus();
       await page.keyboard.down("ArrowRight");
 
@@ -2074,6 +2168,8 @@ test.describe("Immersive accessible portfolio", () => {
         viewport: { width: 390, height: 844 },
       });
       const page = await context.newPage();
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
       const portfolio = new PortfolioPage(page);
 
       try {
@@ -2129,9 +2225,7 @@ test.describe("Immersive accessible portfolio", () => {
           Object.assign(window, { __portfolioRenderedFrames: observedFrames });
         });
         await portfolio.gotoPortfolio();
-        await expect(
-          page.getByRole("status", { name: "Toca para abrir la bóveda." }),
-        ).toBeVisible({ timeout: 30_000 });
+        await portfolio.expectMobileIntroGuidance();
         await expect(page.locator(".vault-curtain-opening")).toHaveAttribute(
           "data-rendered-frame",
           /^\d+$/,
@@ -2147,50 +2241,45 @@ test.describe("Immersive accessible portfolio", () => {
           )
           .toBeGreaterThan(0);
 
-        for (let tap = 0; tap < 24; tap += 1) {
-          const renderedFrameCount = await page.evaluate(
-            () => window.__portfolioRenderedFrames?.length ?? 0,
-          );
-          await page.touchscreen.tap(195, 422);
-          await expect
-            .poll(
-              async () => {
-                const canvasExists = await page
-                  .locator(".vault-curtain-opening")
-                  .count();
-                const currentCount = await page.evaluate(
-                  () => window.__portfolioRenderedFrames?.length ?? 0,
-                );
+        const readIntroState = () =>
+          page.evaluate(() => {
+            const canvas = document.querySelector<HTMLCanvasElement>(
+              ".vault-curtain-opening",
+            );
+            const shell = document.querySelector<HTMLElement>(".vault-shell");
 
-                return canvasExists === 0 || currentCount > renderedFrameCount;
-              },
-              { timeout: INTRO_FRAME_RECOVERY_TIMEOUT_MS },
-            )
-            .toBe(true);
+            if (canvas === null || shell === null) {
+              throw new Error("Mobile intro state probes are unavailable.");
+            }
 
-          if ((await page.locator(".vault-curtain-opening").count()) === 0) {
-            break;
-          }
-        }
+            return {
+              canvasContextReady: canvas.getContext("2d") !== null,
+              canvasFrame: canvas.getAttribute("data-rendered-frame"),
+              canvasFrameState: canvas.getAttribute("data-intro-frame-state"),
+              canvasFirstFrameDrawn: canvas.getAttribute("data-first-frame-drawn"),
+              canvasTagName: canvas.tagName,
+              openDialogCount: document.querySelectorAll("dialog[open]").length,
+              shellIntroActive: shell.getAttribute("data-intro-active"),
+              shellSealDialogOpen: shell.getAttribute("data-seal-dialog-open"),
+              shellUnlocked: shell.getAttribute("data-unlocked"),
+              shellVaultComplete: shell.getAttribute("data-vault-complete"),
+            };
+          });
 
-        await expect(page.locator(".vault-curtain-opening")).toHaveCount(0, {
-          timeout: 12_000,
-        });
-        await expect(page.getByText("Desbloqueado 0/3")).toBeVisible();
-        await expect(
-          page.getByRole("button", { name: /Sello 1 — El Ojo.*Bloqueado/ }),
-        ).toBeVisible();
-        await expect(page.getByRole("dialog")).toHaveCount(0);
-        const renderedFrames = await page.evaluate(
-          () => window.__portfolioRenderedFrames ?? [],
-        );
-        expect(renderedFrames.length).toBeGreaterThanOrEqual(3);
-        expect(
-          renderedFrames.every(
-            (frame, index) =>
-              index === 0 || frame >= renderedFrames[index - 1]!,
-          ),
-        ).toBe(true);
+        const introBeforeTap = await readIntroState();
+        pageErrors.length = 0;
+        await page.touchscreen.tap(195, 422);
+        const introAfterTap = await readIntroState();
+
+        expect(introAfterTap).toEqual(introBeforeTap);
+        expect(introAfterTap.canvasTagName).toBe("CANVAS");
+        expect(introAfterTap.canvasContextReady).toBe(true);
+        expect(introAfterTap.shellIntroActive).toBe("true");
+        expect(introAfterTap.shellSealDialogOpen).toBe("false");
+        expect(introAfterTap.shellUnlocked).toBe("false");
+        expect(introAfterTap.shellVaultComplete).toBe("false");
+        expect(introAfterTap.openDialogCount).toBe(0);
+        expect(pageErrors).toEqual([]);
       } finally {
         await context.close();
       }
@@ -3316,8 +3405,13 @@ test.describe("Immersive accessible portfolio", () => {
        await page.keyboard.press("ArrowLeft");
        await expect(page.getByRole("status").filter({ hasText: "Proyecto activo:" })).toContainText("Software Engineering Playbook");
 
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("button", { name: /^Filtros/ })).toBeVisible({ timeout: 30_000 });
+       await page.reload({ waitUntil: "domcontentloaded" });
+       await expect(page).toHaveURL(/\/$/);
+       await expect(page.getByRole("heading", { name: "¿Qué hay detrás?" })).toBeVisible();
+       await expect(page.getByRole("region", { name: "Sala principal de proyectos" })).toHaveCount(0);
+       await expect(page.getByRole("button", { name: /^Filtros/ })).toHaveCount(0);
+       await expect.poll(() => page.evaluate(() => sessionStorage.getItem("kuroneko:session-progression:v1"))).toBeNull();
+       await portfolio.enterShowcaseFromCurrentPage();
       const lockedRiddle = await portfolio.openLockedRiddle();
       await expect(lockedRiddle).toBeVisible();
       await page.keyboard.press("Escape");
@@ -3509,8 +3603,13 @@ test.describe("Immersive accessible portfolio", () => {
        await page.keyboard.press("ArrowLeft");
        await expect(page.getByRole("status").filter({ hasText: "Proyecto activo:" })).toContainText("Software Engineering Playbook");
 
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("button", { name: /^Filtros/ })).toBeVisible({ timeout: 30_000 });
+       await page.reload({ waitUntil: "domcontentloaded" });
+       await expect(page).toHaveURL(/\/$/);
+       await expect(page.getByRole("heading", { name: "¿Qué hay detrás?" })).toBeVisible();
+       await expect(page.getByRole("region", { name: "Sala principal de proyectos" })).toHaveCount(0);
+       await expect(page.getByRole("button", { name: /^Filtros/ })).toHaveCount(0);
+       await expect.poll(() => page.evaluate(() => sessionStorage.getItem("kuroneko:session-progression:v1"))).toBeNull();
+       await portfolio.enterShowcaseFromCurrentPage();
        success = await portfolio.unlockFromFilter("narrador");
         await success.getByRole("button", { name: "CONTINUAR" }).press("Space");
        await expect(success).toHaveCount(0);
@@ -3547,18 +3646,18 @@ test.describe("Immersive accessible portfolio", () => {
 
       const success = page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" });
       await expect(success).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(success).toHaveCount(0);
-      await expect(page.locator(".project-carousel[data-carousel-focus-target='true']")).toBeFocused();
+       await page.getByRole("button", { name: "CONTINUAR" }).click();
+       await expect(success).toHaveCount(0);
+       await expect(page.locator(".project-carousel[data-carousel-focus-target='true']")).toBeFocused();
 
-      await filterButton.click();
-      const repeatedFilterDialog = page.getByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ });
-      await repeatedFilterDialog.getByRole("searchbox", { name: "Buscar tecnología" }).pressSequentially("el tío ben", { delay: 2 });
-      await expect(page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" })).toHaveCount(0);
-      await page.keyboard.press("Escape");
-      await expect(repeatedFilterDialog).toHaveCount(0);
+       await filterButton.click();
+       const repeatedFilterDialog = page.getByRole("dialog", { name: /UN GRAN PODER CONLLEVA UNA GRAN RESPONSABILIDAD/ });
+       await repeatedFilterDialog.getByRole("searchbox", { name: "Buscar tecnología" }).pressSequentially("el tío ben", { delay: 2 });
+       await expect(repeatedFilterDialog).toHaveCount(0);
+       await expect(page.locator("#project-filter-query")).toHaveValue("");
+       await expect(page.getByRole("dialog", { name: "PROYECTOS DESBLOQUEADOS" })).toHaveCount(0);
 
-      const lifecycleState = await page.evaluate(() => {
+       const lifecycleState = await page.evaluate(() => {
         const surface = document.querySelector<HTMLElement>(".project-showcase-interaction-surface");
         return {
           bodyOverflow: getComputedStyle(document.body).overflow,
@@ -6122,16 +6221,24 @@ test.describe("Immersive accessible portfolio", () => {
         );
         const portfolio = new PortfolioPage(page);
         await portfolio.gotoPortfolio();
-        await expect(
-          page.getByRole("status", { name: "Toca para abrir la bóveda." }),
-        ).toBeVisible({ timeout: 30_000 });
+        await portfolio.expectMobileIntroGuidance();
         await portfolio.unlockMobileVaultForCinematic();
         await page
           .getByRole("button", { name: "Mis obras en construcción" })
-          .click();
-        const rail = page.getByRole("list", { name: "Proyectos filtrados" });
-        await expect(rail).toHaveAttribute("data-gesture-enabled", "true");
-        const box = await rail.boundingBox();
+         .click();
+         const rail = page.getByRole("list", { name: "Proyectos filtrados" });
+         const showcase = page.locator(".project-showcase");
+         const interactionSurface = page.locator(
+           ".project-showcase-interaction-surface",
+         );
+         await expect(rail).toHaveAttribute("data-gesture-enabled", "true");
+         await expect(showcase).toHaveAttribute(
+           "data-showcase-reveal",
+           "settled",
+         );
+         await expect(showcase).not.toHaveAttribute("inert");
+         await expect(interactionSurface).not.toHaveAttribute("inert");
+         const box = await rail.boundingBox();
         if (box === null) throw new Error("Expected carousel gesture surface.");
         const cdp = await context.newCDPSession(page);
         const x = box.x + box.width / 2;
@@ -6146,21 +6253,37 @@ test.describe("Immersive accessible portfolio", () => {
           rail.getByRole("button", { name: "Volver al frente" }),
         ).toHaveCount(0);
         await page.getByRole("button", { name: "Proyecto anterior" }).click();
-        await expect(
-          rail
-            .locator("[aria-current='true']")
-            .getByRole("heading", { name: /.+/ }),
-        ).not.toHaveText("Timer");
+        const activeProjectBeforeVerticalDrag = await rail
+          .locator("[aria-current='true'] .project-card-title")
+          .textContent();
+        const verticalScrollState = await page.evaluate(() => {
+          const scrollingElement = document.scrollingElement;
+
+          if (scrollingElement === null) {
+            throw new Error("Document scroll metrics are unavailable.");
+          }
+
+          return {
+            canScroll: scrollingElement.scrollHeight > scrollingElement.clientHeight + 1,
+            scrollY: window.scrollY,
+          };
+        });
         const scrollY = await page.evaluate(() => window.scrollY);
         await dispatchTouchDrag(cdp, 2, x, y, 0, -160);
-        await expect
-          .poll(() => page.evaluate(() => window.scrollY))
-          .toBeGreaterThan(scrollY);
+        if (verticalScrollState.canScroll) {
+          await expect
+            .poll(() => page.evaluate(() => window.scrollY))
+            .toBeGreaterThan(verticalScrollState.scrollY);
+        } else {
+          await expect
+            .poll(() => page.evaluate(() => window.scrollY))
+            .toBe(scrollY);
+        }
         await expect(
           rail
             .locator("[aria-current='true']")
             .getByRole("heading", { name: /.+/ }),
-        ).not.toHaveText("Timer");
+        ).toHaveText(activeProjectBeforeVerticalDrag ?? "");
         await page.setViewportSize({ width: 844, height: 390 });
         await expect(
           page.getByRole("button", { name: "Proyecto siguiente" }),
